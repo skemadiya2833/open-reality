@@ -38,6 +38,8 @@ from app import (
     format_duration,
     get_preset,
     list_presets,
+    list_speed_modes,
+    resolve_speed_mode,
     split_script_to_beats,
 )
 
@@ -65,6 +67,7 @@ _state = {
     "stage_started": None,
     "worker_ready": False,
     "device_mode": None,
+    "last_took_s": None,
 }
 _job_queue: deque = deque()
 _mp_ctx = mp.get_context("spawn")
@@ -78,7 +81,7 @@ _started = False
 def _worker_main(job_q: mp.Queue, event_q: mp.Queue) -> None:
     os.environ.setdefault("DIFFUSERS_TRUST_REMOTE_KERNELS", "true")
 
-    from app import DEFAULT_PRESET, DEFAULT_STYLE_LOCK, LTXDream, find_resumable_story
+    from app import DEFAULT_PRESET, DEFAULT_STYLE_LOCK, LTXDream, find_resumable_story, format_duration
 
     def emit(**payload) -> None:
         try:
@@ -99,19 +102,42 @@ def _worker_main(job_q: mp.Queue, event_q: mp.Queue) -> None:
         emit(**payload)
 
     engine = LTXDream()
-    emit(type="ready", device_mode=None)
+    try:
+        def _boot_status(msg: str, progress: float | None = None, **_extra) -> None:
+            payload = {"type": "progress", "status": f"startup: {msg}"}
+            if progress is not None:
+                payload["progress"] = progress
+            emit(**payload)
+
+        emit(type="progress", status="preloading LTX (module offload)…", progress=0.0)
+        engine.load(on_status=_boot_status)
+        emit(
+            type="progress",
+            status=(
+                f"idle · model ready ({engine.device_mode}/{engine.pipe_kind})"
+                + (f" · load {format_duration(engine.load_s)}" if engine.load_s else "")
+            ),
+            progress=None,
+        )
+    except Exception as exc:
+        emit(type="progress", status=f"preload failed: {exc}", progress=None)
+        print(f"[worker] preload failed: {exc}")
+    emit(type="ready", device_mode=engine.device_mode)
 
     resumable = find_resumable_story()
     if resumable is not None:
         emit(type="job_start", job_id="resume", status=f"resuming {resumable.name}…", progress=0.0)
+        t0 = time.time()
         try:
             path = engine.generate_story(script="", story_dir=resumable, on_status=on_status)
+            took = time.time() - t0
             emit(
                 type="job_done",
                 job_id="resume",
                 video=path.name,
                 device_mode=engine.device_mode,
-                text=f"Resumed story ready: {path.name}",
+                took_s=took,
+                text=f"Resumed story ready: {path.name} · took {format_duration(took)}",
             )
         except Exception as exc:
             emit(type="job_error", job_id="resume", error=str(exc), device_mode=engine.device_mode)
@@ -122,6 +148,7 @@ def _worker_main(job_q: mp.Queue, event_q: mp.Queue) -> None:
             break
         job_id = job["id"]
         emit(type="job_start", job_id=job_id, status="starting continuity story…", progress=0.0)
+        t0 = time.time()
         try:
             path = engine.generate_story(
                 script=job.get("script") or "",
@@ -132,12 +159,14 @@ def _worker_main(job_q: mp.Queue, event_q: mp.Queue) -> None:
                 ref_paths=job.get("ref_paths") or [],
                 on_status=on_status,
             )
+            took = time.time() - t0
             emit(
                 type="job_done",
                 job_id=job_id,
                 video=path.name,
                 device_mode=engine.device_mode,
-                text=f"Story ready: {path.name}",
+                took_s=took,
+                text=f"Story ready: {path.name} · took {format_duration(took)}",
             )
         except Exception as exc:
             emit(type="job_error", job_id=job_id, error=str(exc), device_mode=engine.device_mode)
@@ -149,12 +178,16 @@ def _set(**kwargs) -> None:
 
 
 def _snapshot() -> dict:
+    from app import format_duration
+
     with _state_lock:
         started = _state.get("stage_started")
         elapsed = int(time.time() - started) if started and _state["busy"] else 0
         status = _state["status"]
+        last_took_s = _state.get("last_took_s")
+        last_took = format_duration(last_took_s) if isinstance(last_took_s, (int, float)) else None
         if _state["busy"] and elapsed >= 2:
-            status = f"{status} · {elapsed // 60}m {elapsed % 60}s"
+            status = f"{status} · {format_duration(elapsed)}"
         progress = _state["progress"]
         pct = int(round(100 * progress)) if isinstance(progress, (int, float)) else None
         return {
@@ -170,6 +203,8 @@ def _snapshot() -> dict:
             "queue_len": _state["queue_len"],
             "messages": list(_state["messages"]),
             "elapsed_s": elapsed,
+            "last_took_s": last_took_s,
+            "last_took": last_took,
             "worker_ready": _state["worker_ready"],
             "device_mode": _state["device_mode"],
             "cuda": torch.cuda.is_available(),
@@ -183,9 +218,11 @@ def _snapshot() -> dict:
                 "frames": DEFAULT_FRAMES,
                 "fps": DEFAULT_FPS,
                 "preset": DEFAULT_PRESET,
+                "speed": "fast",
                 "style_lock": DEFAULT_STYLE_LOCK,
             },
             "presets": list_presets(),
+            "speeds": list_speed_modes(),
         }
 
 
@@ -208,7 +245,11 @@ def _event_listener() -> None:
             break
         et = ev.get("type")
         if et == "ready":
-            _set(worker_ready=True, status="idle")
+            _set(
+                worker_ready=True,
+                status="idle",
+                device_mode=ev.get("device_mode") or _state.get("device_mode"),
+            )
         elif et == "progress":
             payload = {"status": ev.get("status", "working")}
             if "progress" in ev and ev["progress"] is not None:
@@ -236,21 +277,34 @@ def _event_listener() -> None:
                 clips=[],
                 is_final=False,
                 video=None,
+                last_took_s=None,
             )
         elif et == "job_done":
+            from app import format_duration
+
+            took_s = ev.get("took_s")
+            if not isinstance(took_s, (int, float)):
+                with _state_lock:
+                    started = _state.get("stage_started")
+                took_s = (time.time() - started) if started else None
+            took_label = format_duration(took_s) if isinstance(took_s, (int, float)) else None
+            text = ev.get("text") or "Done"
+            if took_label and "took " not in text:
+                text = f"{text} · took {took_label}"
             _append_message(
                 {
                     "id": str(uuid.uuid4()),
                     "role": "assistant",
                     "job_id": ev.get("job_id"),
-                    "text": ev.get("text") or "Done",
+                    "text": text,
                     "video": ev.get("video"),
+                    "took_s": took_s,
                     "ts": time.time(),
                 }
             )
             _set(
                 busy=False,
-                status="done",
+                status=f"done · took {took_label}" if took_label else "done",
                 progress=1.0,
                 video=ev.get("video"),
                 is_final=True,
@@ -258,6 +312,7 @@ def _event_listener() -> None:
                 job_id=None,
                 error=None,
                 stage_started=None,
+                last_took_s=took_s,
             )
             _dispatcher_wake.set()
         elif et == "job_error":
@@ -280,6 +335,7 @@ def _event_listener() -> None:
                 device_mode=ev.get("device_mode"),
                 job_id=None,
                 stage_started=None,
+                last_took_s=None,
             )
             _dispatcher_wake.set()
 
@@ -383,18 +439,22 @@ def _stamp_safe() -> str:
 async def preview(
     script: str = Form(""),
     preset: str = Form(DEFAULT_PRESET),
+    speed: str = Form("fast"),
     style_lock: str = Form(DEFAULT_STYLE_LOCK),
 ):
     script = (script or "").strip()
     if not script:
         return JSONResponse({"ok": False, "error": "Paste a script to see estimates"}, status_code=400)
-    p = get_preset(preset)
+    speed_id, preset_id = resolve_speed_mode(speed, preset)
+    p = get_preset(preset_id)
     style = (style_lock or DEFAULT_STYLE_LOCK).strip()
     beats = split_script_to_beats(script, preset=p, style_lock=style)
     video_s = estimate_duration_s(len(beats), preset=p["id"])
-    wall = estimate_wall_clock_s(len(beats), frames=p["frames"], preset=p["id"])
+    mode = _state.get("device_mode") or "offload"
+    wall = estimate_wall_clock_s(len(beats), frames=p["frames"], preset=p["id"], device_mode=mode)
     return {
         "ok": True,
+        "speed": speed_id,
         "preset": p["id"],
         "preset_label": p["label"],
         "beats": len(beats),
@@ -407,12 +467,14 @@ async def preview(
         "gen_eta_hi": format_duration(wall["total_hi_s"]),
         "gen_per_clip": format_duration(wall["per_clip_s"]),
         "clip": f"{p['width']}x{p['height']} · {p['frames']}f @ {p['fps']}fps · chained",
-        "mode": "offload + last-frame memory",
+        "mode": f"{mode} + last-frame memory",
+        "device_mode": mode,
         "samples": beats[:2],
         "summary": (
             f"{len(beats)} clips · video {format_duration(video_s)} · "
             f"gen ETA ~{format_duration(wall['total_mid_s'])} "
             f"(range {format_duration(wall['total_lo_s'])}–{format_duration(wall['total_hi_s'])})"
+            f" · {speed_id}/{mode}"
         ),
     }
 
@@ -421,6 +483,7 @@ async def preview(
 async def generate(
     script: str = Form(""),
     preset: str = Form(DEFAULT_PRESET),
+    speed: str = Form("fast"),
     style_lock: str = Form(DEFAULT_STYLE_LOCK),
     ref_paths: str = Form(""),  # newline or comma separated absolute paths from /api/upload
 ):
@@ -431,12 +494,14 @@ async def generate(
     if not script:
         return JSONResponse({"ok": False, "error": "Paste a script first"}, status_code=400)
 
-    p = get_preset(preset)
+    speed_id, preset_id = resolve_speed_mode(speed, preset)
+    p = get_preset(preset_id)
     style = (style_lock or DEFAULT_STYLE_LOCK).strip() or DEFAULT_STYLE_LOCK
     refs = [x.strip() for x in ref_paths.replace(",", "\n").splitlines() if x.strip()]
     beats = split_script_to_beats(script, preset=p, style_lock=style)
     secs = estimate_duration_s(len(beats), preset=p["id"])
-    wall = estimate_wall_clock_s(len(beats), frames=p["frames"], preset=p["id"])
+    mode = _state.get("device_mode") or "offload"
+    wall = estimate_wall_clock_s(len(beats), frames=p["frames"], preset=p["id"], device_mode=mode)
     job_id = str(uuid.uuid4())
 
     _append_message(

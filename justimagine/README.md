@@ -18,9 +18,13 @@ UI: http://127.0.0.1:7861 after `python webui.py`.
 | Choice | Why |
 |--------|-----|
 | [`black-forest-labs/FLUX.2-klein-4B`](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) | Apache 2.0, ~4B, designed for consumer GPUs (~13GB class) |
-| **bf16** full load on 16GB | Fits; we try `.to("cuda")` first, offload only if OOM |
+| **bf16 staged on 16GB** | Official HF path: `enable_model_cpu_offload` (TE→DiT→VAE). Do **not** keep all modules in VRAM — that hits Shared GPU memory and can take ~4 minutes |
 | **4 steps**, `guidance_scale=1.0` | Distilled klein defaults — interactive latency |
 | Diffusers from **git** | Needs current `Flux2KleinPipeline` |
+
+**Speed:** warm staged 1024² is ~10–20s on a 5060 Ti. First `webui.py` start **preloads** weights (can take minutes from disk). Status should show `device_mode=staged`. `JUSTIMAGINE_FULL=1` forces all-on-GPU (often slower on 16GB due to paging).
+
+Optional: `JUSTIMAGINE_COMPILE=1` for `torch.compile` (slower first step, slightly faster after).
 
 Target box: **RTX 5060 Ti 16GB Blackwell** + PyTorch **cu128**.
 

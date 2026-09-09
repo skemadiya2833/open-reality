@@ -33,3 +33,15 @@ python webui.py
 - **cinema** / **fast** — variants  
 
 Model: `OzzyGT/LTX-2.3-Distilled-bnb-nf4` via `LTX2ConditionPipeline` when available.
+
+## Speed / VRAM (16GB)
+
+| UI mode | Resolution / frames | When to use |
+|---------|---------------------|-------------|
+| **Fast** (default) | 512×320 · 33f | Drafts — biggest speed win |
+| **Balanced** | 640×384 · 49f | Continuity sweet spot |
+| **Quality** | 768×448 · 49f | Sharper, slower |
+
+Device default is **module CPU offload** (TE→DiT→VAE). Group offload is opt-in via `JUSTDREAM_GROUP=1` (often OOMs on 16GB during setup).
+
+On start the worker **preloads** the model — wait for `model ready (offload/…)` before dreaming.

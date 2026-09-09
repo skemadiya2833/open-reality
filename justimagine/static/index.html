@@ -147,8 +147,14 @@
         const res = await fetch("/api/estimate", { method: "POST", body: fd });
         const data = await res.json();
         if (!data.ok) return;
-        estBig.textContent = data.width + "×" + data.height + " · " + data.steps + " steps";
-        estSub.textContent = "Gen ETA ~" + data.gen_eta_mid + "  (range " + data.gen_eta_lo + " – " + data.gen_eta_hi + ")";
+        estBig.textContent = data.width + "×" + data.height + " · " + data.steps + " steps"
+          + (data.device_mode ? " · " + data.device_mode : "");
+        let line = "Gen ETA ~" + data.gen_eta_mid + "  (range " + data.gen_eta_lo + " – " + data.gen_eta_hi + ")";
+        if (data.device_mode === "full") line += " — full may page VRAM (slow on 16GB)";
+        else if (data.device_mode === "staged") line += " — staged (fast path)";
+        else if (data.warm === false) line += " — includes cold load";
+        else line += " — warm";
+        estSub.textContent = line;
       } catch (e) {}
     }
 
@@ -183,6 +189,7 @@
         barFill.style.width = (p === 1 ? "100%" : "0%");
         pctEl.textContent = "";
         go.textContent = "Send";
+        if (data.last_took) estSub.textContent = "Last run took " + data.last_took;
         return;
       }
       go.textContent = "Queue";

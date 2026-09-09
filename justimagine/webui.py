@@ -45,6 +45,7 @@ _state = {
     "device_mode": None,
     "has_context": False,
     "eta_mid_s": None,
+    "last_took_s": None,
 }
 _job_queue: deque = deque()
 _mp_ctx = mp.get_context("spawn")
@@ -60,7 +61,7 @@ def _worker_main(job_q: mp.Queue, event_q: mp.Queue) -> None:
 
     from PIL import Image
 
-    from app import FluxKlein, OUTPUT_DIR as OUT, _stamp, save_image
+    from app import FluxKlein, OUTPUT_DIR as OUT, _stamp, format_duration, save_image
 
     def emit(**payload) -> None:
         try:
@@ -76,7 +77,27 @@ def _worker_main(job_q: mp.Queue, event_q: mp.Queue) -> None:
 
     engine = FluxKlein()
     last_image: Image.Image | None = None
-    emit(type="ready")
+    try:
+        def _boot_status(msg: str, progress: float | None = None) -> None:
+            payload = {"type": "progress", "status": f"startup: {msg}"}
+            if progress is not None:
+                payload["progress"] = progress
+            emit(**payload)
+
+        emit(type="progress", status="preloading FLUX.2 klein onto GPU…", progress=0.0)
+        engine.load(on_status=_boot_status)
+        emit(
+            type="progress",
+            status=(
+                f"idle · model ready ({engine.device_mode})"
+                + (f" · load {format_duration(engine.load_s)}" if engine.load_s else "")
+            ),
+            progress=None,
+        )
+    except Exception as exc:
+        emit(type="progress", status=f"preload failed: {exc}", progress=None)
+        print(f"[worker] preload failed: {exc}")
+    emit(type="ready", device_mode=engine.device_mode)
 
     while True:
         job = job_q.get()
@@ -98,6 +119,7 @@ def _worker_main(job_q: mp.Queue, event_q: mp.Queue) -> None:
         seed = job.get("seed")
 
         emit(type="job_start", job_id=job_id, status="starting…", progress=0.0)
+        t0 = time.time()
         try:
             if clear_first:
                 last_image = None
@@ -125,6 +147,9 @@ def _worker_main(job_q: mp.Queue, event_q: mp.Queue) -> None:
             )
             path = save_image(result, stem)
             last_image = result
+            took = time.time() - t0
+            infer = engine.last_infer_s
+            label = format_duration(infer if infer is not None else took)
             emit(
                 type="job_done",
                 job_id=job_id,
@@ -132,7 +157,9 @@ def _worker_main(job_q: mp.Queue, event_q: mp.Queue) -> None:
                 context=path.name,
                 has_context=True,
                 device_mode=engine.device_mode,
-                text=("Edited" if ref is not None else "Generated") + f": {prompt[:120]}",
+                took_s=infer if infer is not None else took,
+                text=("Edited" if ref is not None else "Generated")
+                + f": {prompt[:120]} · took {label} · {engine.device_mode}",
             )
         except Exception as exc:
             emit(type="job_error", job_id=job_id, error=str(exc))
@@ -158,6 +185,8 @@ def _snapshot() -> dict:
         if _state["busy"] and isinstance(eta_mid, (int, float)) and isinstance(progress, (int, float)):
             remain = max(0.0, float(eta_mid) * (1.0 - float(progress)))
             eta_left = format_duration(remain)
+        last_took_s = _state.get("last_took_s")
+        last_took = format_duration(last_took_s) if isinstance(last_took_s, (int, float)) else None
         if _state["busy"] and elapsed >= 2:
             status = f"{status} · {elapsed}s"
             if eta_left:
@@ -176,6 +205,8 @@ def _snapshot() -> dict:
             "messages": list(_state["messages"]),
             "elapsed_s": elapsed,
             "eta_left": eta_left,
+            "last_took_s": last_took_s,
+            "last_took": last_took,
             "hint": _state.get("hint"),
             "worker_ready": _state["worker_ready"],
             "device_mode": _state["device_mode"],
@@ -204,7 +235,11 @@ def _event_listener() -> None:
             break
         et = ev.get("type")
         if et == "ready":
-            _set(worker_ready=True, status="idle")
+            _set(
+                worker_ready=True,
+                status="idle",
+                device_mode=ev.get("device_mode") or _state.get("device_mode"),
+            )
         elif et == "progress":
             payload = {"status": ev.get("status", "working")}
             if "progress" in ev and ev["progress"] is not None:
@@ -225,21 +260,34 @@ def _event_listener() -> None:
                 progress=0.0,
                 status=ev.get("status", "starting…"),
                 stage_started=time.time(),
+                last_took_s=None,
             )
         elif et == "job_done":
+            from app import format_duration
+
+            took_s = ev.get("took_s")
+            if not isinstance(took_s, (int, float)):
+                with _state_lock:
+                    started = _state.get("stage_started")
+                took_s = (time.time() - started) if started else None
+            took_label = format_duration(took_s) if isinstance(took_s, (int, float)) else None
+            text = ev.get("text") or "Done"
+            if took_label and "took " not in text:
+                text = f"{text} · took {took_label}"
             _append_message(
                 {
                     "id": str(uuid.uuid4()),
                     "role": "assistant",
                     "job_id": ev.get("job_id"),
-                    "text": ev.get("text") or "Done",
+                    "text": text,
                     "preview": ev.get("preview"),
+                    "took_s": took_s,
                     "ts": time.time(),
                 }
             )
             _set(
                 busy=False,
-                status="done",
+                status=f"done · took {took_label}" if took_label else "done",
                 progress=1.0,
                 preview=ev.get("preview"),
                 context=ev.get("context"),
@@ -249,6 +297,7 @@ def _event_listener() -> None:
                 error=None,
                 stage_started=None,
                 eta_mid_s=None,
+                last_took_s=took_s,
             )
             _dispatcher_wake.set()
         elif et == "job_error":
@@ -263,7 +312,16 @@ def _event_listener() -> None:
                     "ts": time.time(),
                 }
             )
-            _set(busy=False, status="error", progress=None, error=err, job_id=None, stage_started=None, eta_mid_s=None)
+            _set(
+                busy=False,
+                status="error",
+                progress=None,
+                error=err,
+                job_id=None,
+                stage_started=None,
+                eta_mid_s=None,
+                last_took_s=None,
+            )
             _dispatcher_wake.set()
 
 
@@ -370,22 +428,35 @@ async def estimate(
 ):
     from app import estimate_wall_clock_s, format_duration
 
+    warm = (_state.get("device_mode") in ("full", "staged")) and bool(_state.get("worker_ready"))
     wall = estimate_wall_clock_s(
         width=width,
         height=height,
         has_ref=has_ref in ("1", "true", "yes", "on"),
+        warm=warm,
     )
+    mode = _state.get("device_mode") or "unknown"
+    note = ""
+    if mode == "full":
+        note = " · full can page Shared GPU mem on 16GB (slow)"
+    elif mode == "staged":
+        note = " · staged (recommended on 16GB)"
+    elif not warm:
+        note = " · first load may take several minutes"
     return {
         "ok": True,
         "width": width,
         "height": height,
         "steps": 4,
+        "warm": warm,
+        "device_mode": mode,
         "gen_eta_lo": format_duration(wall["total_lo_s"]),
         "gen_eta_mid": format_duration(wall["total_mid_s"]),
         "gen_eta_hi": format_duration(wall["total_hi_s"]),
         "summary": (
             f"{width}×{height} · 4 steps · ETA ~{format_duration(wall['total_mid_s'])} "
             f"(range {format_duration(wall['total_lo_s'])}–{format_duration(wall['total_hi_s'])})"
+            f"{note}"
         ),
     }
 
@@ -418,7 +489,8 @@ async def generate(
     do_clear = clear_context in ("1", "true", "yes", "on")
     seed_val = int(seed) if str(seed).strip().isdigit() else None
     has_ref = bool(filename) or (not do_clear and _state.get("has_context"))
-    wall = estimate_wall_clock_s(width=width, height=height, has_ref=bool(has_ref))
+    warm = (_state.get("device_mode") in ("full", "staged")) and bool(_state.get("worker_ready"))
+    wall = estimate_wall_clock_s(width=width, height=height, has_ref=bool(has_ref), warm=warm)
 
     _append_message(
         {

@@ -322,7 +322,7 @@
         bar.classList.remove("indeterminate");
         barFill.style.width = (p === 1 ? "100%" : "0%");
         pctEl.textContent = "";
-        hintEl.textContent = data.hint || "";
+        hintEl.textContent = data.last_took ? ("Last run took " + data.last_took) : (data.hint || "");
         go.disabled = false;
         go.textContent = "Send";
         return;

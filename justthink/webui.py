@@ -137,6 +137,7 @@ def _worker_main(job_q: mp.Queue, event_q: mp.Queue) -> None:
         image_bytes = job.get("image_bytes")
 
         emit(type="job_start", job_id=job_id, status="starting…", progress=0.0)
+        t0 = time.time()
         try:
             if image_bytes is not None:
                 on_status("loading image…", 0.02)
@@ -158,12 +159,17 @@ def _worker_main(job_q: mp.Queue, event_q: mp.Queue) -> None:
                 i2_3d, pil, mode, stem, prior_mesh=prior, on_status=on_status
             )
             last_mesh = mesh
+            took = time.time() - t0
+            from app import format_duration
+
             emit(
                 type="job_done",
                 job_id=job_id,
                 preview=preview_name,
                 mesh=path.name,
                 mode=mode,
+                took_s=took,
+                text=f"Done ({mode}) · took {format_duration(took)}",
             )
         except Exception as exc:
             free_vram()
@@ -190,6 +196,7 @@ _state = {
     "hint": None,
     "worker_ready": False,
     "eta_mid_s": None,
+    "last_took_s": None,
 }
 _job_queue: deque = deque()
 _mp_ctx = mp.get_context("spawn")
@@ -221,6 +228,8 @@ def _snapshot() -> dict:
         if _state["busy"] and isinstance(eta_mid, (int, float)) and isinstance(progress, (int, float)):
             remain = max(0.0, float(eta_mid) * (1.0 - float(progress)))
             eta_left = format_duration(remain)
+        last_took_s = _state.get("last_took_s")
+        last_took = format_duration(last_took_s) if isinstance(last_took_s, (int, float)) else None
         if _state["busy"] and elapsed >= 3:
             st = status or ""
             if "(0/" in st or "loading" in st.lower() or "warming" in st.lower():
@@ -241,6 +250,8 @@ def _snapshot() -> dict:
             "messages": list(_state["messages"]),
             "elapsed_s": elapsed,
             "eta_left": eta_left,
+            "last_took_s": last_took_s,
+            "last_took": last_took,
             "hint": hint,
             "worker_ready": _state["worker_ready"],
             "cuda": torch.cuda.is_available(),
@@ -290,22 +301,35 @@ def _event_listener() -> None:
                 status=ev.get("status", "starting…"),
                 stage_started=time.time(),
                 hint=None,
+                last_took_s=None,
             )
         elif et == "job_done":
+            from app import format_duration
+
+            took_s = ev.get("took_s")
+            if not isinstance(took_s, (int, float)):
+                with _state_lock:
+                    started = _state.get("stage_started")
+                took_s = (time.time() - started) if started else None
+            took_label = format_duration(took_s) if isinstance(took_s, (int, float)) else None
+            text = ev.get("text") or f"Done ({ev.get('mode')})"
+            if took_label and "took " not in text:
+                text = f"{text} · took {took_label}"
             _append_message(
                 {
                     "id": str(uuid.uuid4()),
                     "role": "assistant",
                     "job_id": ev.get("job_id"),
-                    "text": f"Done ({ev.get('mode')})",
+                    "text": text,
                     "preview": ev.get("preview"),
                     "mesh": ev.get("mesh"),
+                    "took_s": took_s,
                     "ts": time.time(),
                 }
             )
             _set(
                 busy=False,
-                status="done",
+                status=f"done · took {took_label}" if took_label else "done",
                 progress=1.0,
                 mesh=ev.get("mesh"),
                 preview=ev.get("preview"),
@@ -313,6 +337,7 @@ def _event_listener() -> None:
                 error=None,
                 stage_started=None,
                 eta_mid_s=None,
+                last_took_s=took_s,
                 hint=None,
             )
             _dispatcher_wake.set()
@@ -336,6 +361,7 @@ def _event_listener() -> None:
                 job_id=None,
                 stage_started=None,
                 eta_mid_s=None,
+                last_took_s=None,
                 hint=None,
             )
             _dispatcher_wake.set()

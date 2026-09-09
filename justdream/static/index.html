@@ -54,7 +54,15 @@
     }
     textarea#script { min-height: 8rem; resize: vertical; line-height: 1.45; }
     textarea#styleLock { min-height: 3.2rem; resize: vertical; font-size: 0.88rem; color: var(--muted); }
-    .presets { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+    .presets, .speeds { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+    .speeds { margin-bottom: 0.35rem; }
+    button.speed, button.preset {
+      border: 1px solid var(--line); background: #0c0b09; color: var(--muted);
+      border-radius: 999px; padding: 0.4rem 0.75rem; font: inherit; cursor: pointer;
+    }
+    button.speed.active, button.preset.active {
+      border-color: var(--accent); color: var(--ink); background: #1a1510;
+    }
     .preset {
       border: 1px solid var(--line); background: #0a0d10; color: var(--muted);
       border-radius: 999px; padding: 0.4rem 0.75rem; font: inherit; font-size: 0.8rem; cursor: pointer;
@@ -110,6 +118,7 @@
       </div>
       <div class="chat" id="chat"></div>
       <form class="composer" id="form">
+        <div class="speeds" id="speeds"></div>
         <div class="presets" id="presets"></div>
         <textarea id="script" name="script" placeholder="Script — one sentence/paragraph per beat.
 Each beat becomes ONE clip, chained from the previous last frame (same style, same character)."></textarea>
@@ -119,7 +128,8 @@ Each beat becomes ONE clip, chained from the previous last frame (same style, sa
           <button type="button" class="secondary" id="uploadRefs">Attach refs</button>
         </div>
         <div id="refList">No reference images/videos attached.</div>
-        <input type="hidden" name="preset" id="preset" value="continuity" />
+        <input type="hidden" name="speed" id="speed" value="fast" />
+        <input type="hidden" name="preset" id="preset" value="fast" />
         <div class="estimate empty" id="estimate">
           <div class="title">Estimate</div>
           <div class="big" id="estBig">Type a script to see video length &amp; gen ETA</div>
@@ -127,7 +137,7 @@ Each beat becomes ONE clip, chained from the previous last frame (same style, sa
           <div class="meta" id="estMeta"></div>
         </div>
         <div class="row">
-          <span class="hint">Continuity = last-frame memory + style lock. Keep PC awake.</span>
+          <span class="hint">Fast = fewer frames (biggest speed win). Keep PC awake.</span>
           <button type="button" class="secondary" id="preview">Refresh estimate</button>
           <button id="go" type="submit">Dream</button>
         </div>
@@ -148,7 +158,9 @@ Each beat becomes ONE clip, chained from the previous last frame (same style, sa
     const scriptEl = document.getElementById("script");
     const styleEl = document.getElementById("styleLock");
     const presetEl = document.getElementById("preset");
+    const speedEl = document.getElementById("speed");
     const presetsEl = document.getElementById("presets");
+    const speedsEl = document.getElementById("speeds");
     const refsInput = document.getElementById("refs");
     const uploadBtn = document.getElementById("uploadRefs");
     const refList = document.getElementById("refList");
@@ -171,6 +183,7 @@ Each beat becomes ONE clip, chained from the previous last frame (same style, sa
     let statusAbort = null;
     let lastPct = 0;
     let presets = [];
+    let speeds = [];
     let refPaths = [];
     let estimateTimer = null;
     let knownClips = [];
@@ -226,7 +239,8 @@ Each beat becomes ONE clip, chained from the previous last frame (same style, sa
       }
       const fd = new FormData();
       fd.set("script", script);
-      fd.set("preset", presetEl.value || "continuity");
+      fd.set("speed", speedEl.value || "fast");
+      fd.set("preset", presetEl.value || "fast");
       fd.set("style_lock", styleEl.value || "");
       try {
         const res = await fetch("/api/preview", { method: "POST", body: fd });
@@ -267,19 +281,45 @@ Each beat becomes ONE clip, chained from the previous last frame (same style, sa
       chat.scrollTop = chat.scrollHeight;
     }
 
+    function renderSpeeds(list) {
+      speeds = list || [];
+      speedsEl.innerHTML = "";
+      speeds.forEach((s) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "speed" + (s.id === speedEl.value ? " active" : "");
+        b.textContent = s.label;
+        b.title = s.blurb || "";
+        b.addEventListener("click", () => {
+          speedEl.value = s.id;
+          presetEl.value = s.preset;
+          [...speedsEl.children].forEach((c) => c.classList.remove("active"));
+          b.classList.add("active");
+          [...presetsEl.children].forEach((c) => {
+            c.classList.toggle("active", c.dataset.id === s.preset);
+          });
+          scheduleEstimate();
+        });
+        speedsEl.appendChild(b);
+      });
+    }
+
     function renderPresets(list) {
       presets = list || [];
       presetsEl.innerHTML = "";
       presets.forEach((p) => {
         const b = document.createElement("button");
         b.type = "button";
+        b.dataset.id = p.id;
         b.className = "preset" + (p.id === presetEl.value ? " active" : "");
         b.textContent = p.label;
-        b.title = p.blurb;
+        b.title = p.blurb || "";
         b.addEventListener("click", () => {
           presetEl.value = p.id;
+          speedEl.value = "custom";
           [...presetsEl.children].forEach((c) => c.classList.remove("active"));
           b.classList.add("active");
+          [...speedsEl.children].forEach((c) => c.classList.remove("active"));
           scheduleEstimate();
         });
         presetsEl.appendChild(b);
@@ -296,6 +336,10 @@ Each beat becomes ONE clip, chained from the previous last frame (same style, sa
         barFill.style.width = (p === 1 ? "100%" : "0%");
         pctEl.textContent = "";
         go.textContent = "Dream";
+        if (data.last_took) {
+          estimateEl.classList.remove("empty");
+          estMeta.textContent = "Last run took " + data.last_took;
+        }
         return;
       }
       go.textContent = "Queue another";
@@ -318,12 +362,14 @@ Each beat becomes ONE clip, chained from the previous last frame (same style, sa
       try {
         const res = await fetch("/api/status", { signal: statusAbort.signal, cache: "no-store" });
         const data = await res.json();
-        if (data.presets && !presetsEl.children.length) {
+        if ((data.speeds || data.presets) && !speedsEl.children.length) {
           if (data.defaults) {
+            if (data.defaults.speed) speedEl.value = data.defaults.speed;
             if (data.defaults.preset) presetEl.value = data.defaults.preset;
             if (data.defaults.style_lock && !styleEl.value) styleEl.value = data.defaults.style_lock;
           }
-          renderPresets(data.presets);
+          renderSpeeds(data.speeds || []);
+          renderPresets(data.presets || []);
         }
         if (data.device) {
           device.textContent = "GPU: " + data.device +
@@ -369,7 +415,8 @@ Each beat becomes ONE clip, chained from the previous last frame (same style, sa
       if (!script) return;
       const fd = new FormData();
       fd.set("script", script);
-      fd.set("preset", presetEl.value || "continuity");
+      fd.set("speed", speedEl.value || "fast");
+      fd.set("preset", presetEl.value || "fast");
       fd.set("style_lock", styleEl.value);
       fd.set("ref_paths", refPaths.join("\n"));
       const res = await fetch("/api/generate", { method: "POST", body: fd });

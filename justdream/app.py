@@ -6,9 +6,12 @@ Fixes the overnight failure mode (random 1–2s style-jumping clips) by:
   • locked visual style on every prompt + strong anti-style-drift negative
   • last-frame conditioning so clip N+1 continues from clip N (LTX2ConditionPipeline)
   • optional reference image/video that seeds the chain and is remembered in plan.json
-  • CPU offload by default (16GB)
 
-JUSTDREAM_STAGED=1 still forces a non-offload attempt.
+Device strategy on 16GB (same idea as justimagine):
+  • default = Diffusers module CPU offload (TE→DiT→VAE) — reliable on 16GB
+  • UI Fast/Balanced/Quality picks resolution+frames (frames dominate wall time)
+  • `JUSTDREAM_GROUP=1` tries group offload (rebuilds pipe on OOM)
+  • `JUSTDREAM_FULL=1` forces all-on-GPU (often pages Shared GPU memory)
 """
 
 from __future__ import annotations
@@ -33,6 +36,9 @@ UPLOADS_DIR = OUTPUT_DIR / "uploads"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 STORIES_DIR.mkdir(parents=True, exist_ok=True)
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Helps when staging large LTX modules in/out of 16GB.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 MODEL_ID = "OzzyGT/LTX-2.3-Distilled-bnb-nf4"
 
@@ -124,7 +130,7 @@ PRESETS: dict[str, dict] = {
     },
 }
 
-DEFAULT_PRESET = "continuity"
+DEFAULT_PRESET = "fast"
 _p0 = PRESETS[DEFAULT_PRESET]
 DEFAULT_WIDTH = int(_p0["width"])
 DEFAULT_HEIGHT = int(_p0["height"])
@@ -178,6 +184,7 @@ def max_frames_for_res(width: int, height: int) -> int:
 def free_vram() -> None:
     gc.collect()
     if torch.cuda.is_available():
+        torch.cuda.synchronize()
         torch.cuda.empty_cache()
 
 
@@ -194,8 +201,83 @@ def _model_path() -> str:
     return MODEL_ID
 
 
-def _want_staged() -> bool:
-    return os.environ.get("JUSTDREAM_STAGED", "").strip().lower() in ("1", "true", "yes")
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _want_full_gpu() -> bool:
+    return _env_flag("JUSTDREAM_FULL")
+
+
+def _want_group_offload() -> bool:
+    """Opt-in only — group offload often OOMs during setup on 16GB + bnb."""
+    return _env_flag("JUSTDREAM_GROUP")
+
+
+def _vram_stats() -> str:
+    if not torch.cuda.is_available():
+        return "no cuda"
+    alloc = torch.cuda.memory_allocated(0) / (1024 ** 3)
+    reserved = torch.cuda.memory_reserved(0) / (1024 ** 3)
+    free, total = torch.cuda.mem_get_info()
+    return (
+        f"alloc {alloc:.1f}GB · reserved {reserved:.1f}GB · "
+        f"free {free / (1024 ** 3):.1f}/{total / (1024 ** 3):.1f}GB"
+    )
+
+
+# UI speed modes → preset ids (resolution/frames dominate wall time on 16GB)
+SPEED_MODES: dict[str, dict] = {
+    "fast": {
+        "label": "Fast",
+        "blurb": "512×320 · 33f · quick drafts (~half the wait of Balanced)",
+        "preset": "fast",
+    },
+    "balanced": {
+        "label": "Balanced",
+        "blurb": "640×384 · 49f · continuity default",
+        "preset": "continuity",
+    },
+    "quality": {
+        "label": "Quality",
+        "blurb": "768×448 · 49f · sharper, slower",
+        "preset": "cinema",
+    },
+}
+
+
+def list_speed_modes() -> list[dict]:
+    out = []
+    for sid, s in SPEED_MODES.items():
+        p = get_preset(s["preset"])
+        out.append(
+            {
+                "id": sid,
+                "label": s["label"],
+                "blurb": s["blurb"],
+                "preset": s["preset"],
+                "width": p["width"],
+                "height": p["height"],
+                "frames": p["frames"],
+                "default": sid == "fast",
+            }
+        )
+    return out
+
+
+def resolve_speed_mode(speed: str | None, preset: str | None) -> tuple[str, str]:
+    """Return (speed_id, preset_id). Explicit preset wins if speed empty."""
+    speed = (speed or "").strip().lower()
+    preset = (preset or "").strip().lower()
+    if speed in SPEED_MODES:
+        return speed, SPEED_MODES[speed]["preset"]
+    if preset in PRESETS:
+        # Infer speed from preset when possible
+        for sid, s in SPEED_MODES.items():
+            if s["preset"] == preset:
+                return sid, preset
+        return "custom", preset
+    return "fast", SPEED_MODES["fast"]["preset"]
 
 
 def _distill_guidance() -> dict:
@@ -303,23 +385,29 @@ def estimate_wall_clock_s(
     n_beats: int,
     frames: int | None = None,
     preset: str | None = None,
+    device_mode: str | None = None,
 ) -> dict:
     """
-    Rough overnight ETA under CPU offload on 16GB.
-    Calibrated loosely: ~10–18 min per 49-frame distilled clip; scales with frames.
+    Rough ETA on 16GB with module CPU offload (reliable default).
+    Frame count dominates time more than resolution.
     """
     p = get_preset(preset)
     f = p["frames"] if frames is None else int(frames)
-    # Mid estimate ~14 min @ 49f; low/high band ±40%
-    per_mid = max(180.0, (f / 49.0) * 14.0 * 60.0)
-    per_lo = per_mid * 0.6
-    per_hi = per_mid * 1.5
+    mode = (device_mode or "offload").lower()
+    # ~8–10 min mid @ 49f module offload after warm; scales ~linear with frames
+    base = 9.0 * 60.0 if mode != "full" else 12.0 * 60.0
+    if mode == "staged":
+        base = 7.0 * 60.0
+    per_mid = max(90.0, (f / 49.0) * base)
+    per_lo = per_mid * 0.55
+    per_hi = per_mid * 1.6
     return {
         "per_clip_s": round(per_mid),
         "total_lo_s": round(n_beats * per_lo),
         "total_mid_s": round(n_beats * per_mid),
         "total_hi_s": round(n_beats * per_hi),
-        "note": "offload ETA on 16GB — first clip slower (model load)",
+        "device_mode": mode,
+        "note": f"{mode} ETA on 16GB — use Fast speed mode for shorter waits",
     }
 
 
@@ -463,6 +551,53 @@ class LTXDream:
         self.pipe = None
         self.device_mode = "unloaded"
         self.pipe_kind = "none"  # condition | t2v
+        self.load_s: float | None = None
+        self.last_infer_s: float | None = None
+
+    def _instantiate_pipe(self, src: str, local_only: bool):
+        try:
+            from diffusers import LTX2ConditionPipeline
+
+            pipe = LTX2ConditionPipeline.from_pretrained(
+                src, torch_dtype=torch.bfloat16, local_files_only=local_only
+            )
+            kind = "condition"
+            print("[LTXDream] LTX2ConditionPipeline (last-frame / ref chaining enabled)")
+        except Exception as exc:
+            print(f"[LTXDream] ConditionPipeline unavailable ({exc}); falling back to T2V")
+            from diffusers import LTX2Pipeline
+
+            pipe = LTX2Pipeline.from_pretrained(
+                src, torch_dtype=torch.bfloat16, local_files_only=local_only
+            )
+            kind = "t2v"
+        return pipe, kind
+
+    def _drop_pipe(self) -> None:
+        if self.pipe is not None:
+            try:
+                del self.pipe
+            except Exception:
+                pass
+            self.pipe = None
+        free_vram()
+
+    def _enable_vae_tiling(self) -> None:
+        assert self.pipe is not None
+        for name in ("vae", "audio_vae"):
+            vae = getattr(self.pipe, name, None)
+            if vae is not None and hasattr(vae, "enable_tiling"):
+                try:
+                    vae.enable_tiling()
+                except Exception:
+                    pass
+
+    def _apply_module_offload(self) -> None:
+        assert self.pipe is not None
+        self.pipe.enable_model_cpu_offload()
+        self.device_mode = "offload"
+        self._enable_vae_tiling()
+        print(f"[LTXDream] device_mode=offload · {_vram_stats()}")
 
     def load(self, on_status=None) -> None:
         if self.pipe is not None:
@@ -475,55 +610,64 @@ class LTXDream:
         src = _model_path()
         local_only = src != MODEL_ID and "nunchaku" not in src.lower()
         print(f"[LTXDream] loading {src}…")
-        prog.set("loading weights…", 0.02)
+        prog.set("loading LTX weights from disk (one-time)…", 0.02)
+        t0 = time.time()
 
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
         free_vram()
 
-        # Prefer ConditionPipeline so we can chain last-frame / refs.
-        try:
-            from diffusers import LTX2ConditionPipeline
+        self.pipe, self.pipe_kind = self._instantiate_pipe(src, local_only)
 
-            self.pipe = LTX2ConditionPipeline.from_pretrained(
-                src, torch_dtype=torch.bfloat16, local_files_only=local_only
-            )
-            self.pipe_kind = "condition"
-            print("[LTXDream] LTX2ConditionPipeline (last-frame / ref chaining enabled)")
-        except Exception as exc:
-            print(f"[LTXDream] ConditionPipeline unavailable ({exc}); falling back to T2V")
-            from diffusers import LTX2Pipeline
-
-            self.pipe = LTX2Pipeline.from_pretrained(
-                src, torch_dtype=torch.bfloat16, local_files_only=local_only
-            )
-            self.pipe_kind = "t2v"
-
-        if _want_staged():
-            self.pipe.to("cuda")
-            self.device_mode = "staged"
-        else:
-            self.pipe.enable_model_cpu_offload()
-            self.device_mode = "offload"
-            print("[LTXDream] device_mode=offload")
-
-        vae = getattr(self.pipe, "vae", None)
-        if vae is not None and hasattr(vae, "enable_tiling"):
+        if _want_full_gpu():
+            prog.set("JUSTDREAM_FULL=1 — placing pipeline on CUDA…", 0.04)
             try:
-                vae.enable_tiling()
-            except Exception:
-                pass
+                self.pipe.to("cuda")
+                self.device_mode = "full"
+                self._enable_vae_tiling()
+                print(f"[LTXDream] device_mode=full · {_vram_stats()}")
+            except torch.cuda.OutOfMemoryError:
+                print("[LTXDream] full OOM — reloading clean pipe for module offload")
+                self._drop_pipe()
+                self.pipe, self.pipe_kind = self._instantiate_pipe(src, local_only)
+                prog.set("module CPU offload (TE→DiT→VAE)…", 0.04)
+                self._apply_module_offload()
+        elif _want_group_offload():
+            # Opt-in: often OOMs on 16GB during enable — must rebuild pipe on failure.
+            prog.set("JUSTDREAM_GROUP=1 — trying group offload…", 0.04)
+            try:
+                self.pipe.enable_group_offload(
+                    onload_device=torch.device("cuda"),
+                    offload_device=torch.device("cpu"),
+                    offload_type="leaf_level",
+                    use_stream=True,
+                    record_stream=True,
+                )
+                self.device_mode = "staged"
+                self._enable_vae_tiling()
+                print(f"[LTXDream] device_mode=staged · {_vram_stats()}")
+            except Exception as exc:
+                print(f"[LTXDream] group offload failed ({exc}); rebuilding for module offload")
+                self._drop_pipe()
+                self.pipe, self.pipe_kind = self._instantiate_pipe(src, local_only)
+                prog.set("module CPU offload (TE→DiT→VAE)…", 0.04)
+                self._apply_module_offload()
+        else:
+            # Default: reliable Diffusers module staging (same family as justimagine staged).
+            # Frame count is what dominates time — use UI Fast mode for speed.
+            prog.set("module CPU offload (TE→DiT→VAE)…", 0.04)
+            self._apply_module_offload()
 
-        prog.set(f"ready ({self.device_mode}/{self.pipe_kind})", 0.05)
+        self.load_s = time.time() - t0
+        print(f"[LTXDream] load took {format_duration(self.load_s)}")
+        prog.set(f"ready ({self.device_mode}/{self.pipe_kind}) · load {format_duration(self.load_s)}", 0.05)
 
     def unload(self) -> None:
-        if self.pipe is None:
-            return
-        del self.pipe
-        self.pipe = None
+        self._drop_pipe()
         self.device_mode = "unloaded"
         self.pipe_kind = "none"
-        free_vram()
+        self.load_s = None
+        self.last_infer_s = None
 
     def generate(
         self,
@@ -550,6 +694,12 @@ class LTXDream:
         self.load(on_status=lambda m, p: prog.set(m, min(0.08, (p or 0) * 0.08)))
         assert self.pipe is not None
 
+        if self.device_mode == "full":
+            prog.set(
+                "device_mode=full — if multi-minute + Shared GPU mem, restart without JUSTDREAM_FULL",
+                0.08,
+            )
+
         width = _snap32(width)
         height = _snap32(height)
         num_frames = _frames_8n1(num_frames)
@@ -571,17 +721,24 @@ class LTXDream:
         last_err: Exception | None = None
         video = audio = None
         used_frames = num_frames
+        peak_alloc = 0.0
 
         for attempt, frames in enumerate(frames_try):
             used_frames = frames
             step_t0 = time.time()
 
             def _cb(pipe, step, timestep, callback_kwargs, _frames=frames, _t0=step_t0):
+                nonlocal peak_alloc
                 done = step + 1
                 frac = done / steps
                 elapsed = time.time() - _t0
                 eta = (elapsed / done) * (steps - done)
-                prog.set(f"diffusion {done}/{steps} ({_frames}f) · ~{eta:.0f}s left", 0.1 + 0.75 * frac)
+                if torch.cuda.is_available():
+                    peak_alloc = max(peak_alloc, torch.cuda.memory_allocated(0) / (1024 ** 3))
+                prog.set(
+                    f"diffusion {done}/{steps} ({_frames}f) · ~{eta:.0f}s left · {self.device_mode}",
+                    0.1 + 0.75 * frac,
+                )
                 return callback_kwargs
 
             kwargs = dict(
@@ -612,6 +769,7 @@ class LTXDream:
                     prog.set(f"{tag} {width}x{height} × {frames}f…", 0.1)
                     video, audio = self.pipe(**kwargs)
                 last_err = None
+                self.last_infer_s = time.time() - step_t0
                 break
             except torch.cuda.OutOfMemoryError as exc:
                 last_err = exc
@@ -640,8 +798,12 @@ class LTXDream:
             output_path=str(out),
         )
         last_pil = numpy_video_to_last_pil(video[0])
-        prog.set(f"clip ready ({used_frames}f, {time.time() - t0:.0f}s)", 1.0)
-        print(f"[save] {out}")
+        wall = time.time() - t0
+        bits = [f"{used_frames}f", f"{wall:.0f}s", self.device_mode]
+        if peak_alloc:
+            bits.append(f"peak {peak_alloc:.1f}GB")
+        prog.set(f"clip ready ({', '.join(bits)})", 1.0)
+        print(f"[save] {out} · {' · '.join(bits)} · {_vram_stats()}")
         if return_last_frame:
             return out, last_pil
         return out
