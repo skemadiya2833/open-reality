@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>justimagine</title>
+  <style>
+    :root {
+      --bg: #12110f;
+      --panel: #1a1916;
+      --ink: #f2efe8;
+      --muted: #9a958a;
+      --line: #2e2c27;
+      --accent: #d4a574;
+      --accent-ink: #1a1208;
+      --user: #2a2620;
+      --bot: #1e1c18;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "IBM Plex Sans", system-ui, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(900px 500px at 0% 0%, #2a2418 0%, transparent 55%),
+        radial-gradient(700px 400px at 100% 10%, #1e2420 0%, transparent 50%),
+        var(--bg);
+      display: flex;
+      flex-direction: column;
+    }
+    header { max-width: 1100px; width: 100%; margin: 0 auto; padding: 1rem 1.25rem 0.5rem; }
+    header h1 { margin: 0; font-size: 1.5rem; letter-spacing: -0.03em; }
+    header p { margin: 0.25rem 0 0; color: var(--muted); font-size: 0.9rem; }
+    .layout {
+      flex: 1; display: grid; grid-template-columns: 1.15fr 0.95fr; gap: 1rem;
+      max-width: 1100px; width: 100%; margin: 0 auto; padding: 0.5rem 1.25rem 1rem; min-height: 0;
+    }
+    @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+    .panel {
+      background: color-mix(in srgb, var(--panel) 92%, black);
+      border: 1px solid var(--line); border-radius: 14px; min-height: 0;
+      display: flex; flex-direction: column;
+    }
+    .progress-wrap { padding: 0.75rem 1rem 0; }
+    .progress-label { display: flex; justify-content: space-between; gap: 0.75rem; color: var(--muted); font-size: 0.85rem; margin-bottom: 0.35rem; }
+    .progress-label #status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #pct { font-variant-numeric: tabular-nums; color: var(--ink); }
+    .bar { height: 8px; border-radius: 999px; background: #0c0b09; border: 1px solid var(--line); overflow: hidden; }
+    .bar > span { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, #8a6a40, var(--accent)); transition: width 0.35s ease; }
+    .bar.indeterminate > span { width: 35% !important; animation: slide 1.1s ease-in-out infinite; }
+    @keyframes slide { 0% { transform: translateX(-120%); } 100% { transform: translateX(320%); } }
+    .estimate {
+      margin: 0.55rem 1rem 0; border: 1px solid var(--line); border-radius: 12px; padding: 0.65rem 0.85rem;
+      background: #0c0b09; display: grid; gap: 0.25rem;
+    }
+    .estimate .title { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+    .estimate .big { font-size: 0.95rem; color: var(--ink); }
+    .estimate .sub { font-size: 0.8rem; color: var(--accent); }
+    .chat { overflow: auto; padding: 1rem; gap: 0.75rem; display: flex; flex-direction: column; flex: 1; }
+    .bubble { max-width: 92%; padding: 0.75rem 0.9rem; border-radius: 12px; border: 1px solid var(--line); line-height: 1.4; white-space: pre-wrap; }
+    .bubble.user { align-self: flex-end; background: var(--user); }
+    .bubble.assistant { align-self: flex-start; background: var(--bot); }
+    .bubble .meta { color: var(--muted); font-size: 0.75rem; margin-bottom: 0.35rem; }
+    .bubble.err { color: #f0c2c2; }
+    .composer { border-top: 1px solid var(--line); padding: 0.85rem; display: grid; gap: 0.55rem; }
+    textarea, input[type="file"], input[type="number"] {
+      width: 100%; border: 1px solid var(--line); background: #0c0b09; color: var(--ink);
+      border-radius: 10px; padding: 0.7rem 0.8rem; font: inherit;
+    }
+    textarea { min-height: 4.2rem; resize: vertical; }
+    .row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+    label.chk { font-size: 0.88rem; display: inline-flex; gap: 0.35rem; align-items: center; }
+    button {
+      border: 0; border-radius: 999px; padding: 0.65rem 1.1rem; font: inherit; font-weight: 650;
+      cursor: pointer; background: var(--accent); color: var(--accent-ink);
+    }
+    button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+    .viewer-panel { padding: 1rem; gap: 0.75rem; }
+    .viewer-panel label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+    .preview { width: 100%; height: 280px; object-fit: contain; border-radius: 12px; background: #0a0908; border: 1px solid var(--line); display: none; }
+    .preview.show { display: block; }
+    .hint { color: var(--muted); font-size: 0.82rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>justimagine</h1>
+    <p id="device">Checking GPU…</p>
+  </header>
+  <div class="layout">
+    <section class="panel">
+      <div class="progress-wrap">
+        <div class="progress-label"><span id="status">idle</span><span id="pct"></span><span id="queue"></span></div>
+        <div class="bar" id="bar"><span id="barFill"></span></div>
+      </div>
+      <div class="estimate" id="estimate">
+        <div class="title">Estimate</div>
+        <div class="big" id="estBig">1024×1024 · 4 steps</div>
+        <div class="sub" id="estSub">Gen ETA loading…</div>
+      </div>
+      <div class="chat" id="chat"></div>
+      <form class="composer" id="form">
+        <textarea id="prompt" name="prompt" placeholder="Describe an image, or ask to edit the current one… (Enter to send)"></textarea>
+        <input id="image" name="image" type="file" accept="image/*" />
+        <div class="row">
+          <label class="chk"><input type="checkbox" id="clearCtx" name="clear_context" value="1" /> start fresh (ignore context)</label>
+          <button type="button" class="ghost" id="clearBtn">Clear context</button>
+          <button id="go" type="submit">Send</button>
+        </div>
+        <div class="hint">Follow-ups reuse the last image as edit context unless you start fresh.</div>
+      </form>
+    </section>
+    <section class="panel viewer-panel">
+      <label>Context / result</label>
+      <img class="preview" id="preview" alt="Result" />
+      <div id="links" class="hint"></div>
+    </section>
+  </div>
+  <script>
+    const chat = document.getElementById("chat");
+    const form = document.getElementById("form");
+    const go = document.getElementById("go");
+    const promptEl = document.getElementById("prompt");
+    const statusEl = document.getElementById("status");
+    const pctEl = document.getElementById("pct");
+    const queueEl = document.getElementById("queue");
+    const bar = document.getElementById("bar");
+    const barFill = document.getElementById("barFill");
+    const estBig = document.getElementById("estBig");
+    const estSub = document.getElementById("estSub");
+    const preview = document.getElementById("preview");
+    const links = document.getElementById("links");
+    const device = document.getElementById("device");
+    let seenIds = new Set();
+    let lastPreview = null;
+    let statusAbort = null;
+    let lastPct = 0;
+
+    async function refreshEstimate() {
+      const fd = new FormData();
+      fd.set("width", "1024");
+      fd.set("height", "1024");
+      const hasFile = document.getElementById("image").files && document.getElementById("image").files.length;
+      fd.set("has_ref", hasFile ? "1" : "0");
+      try {
+        const res = await fetch("/api/estimate", { method: "POST", body: fd });
+        const data = await res.json();
+        if (!data.ok) return;
+        estBig.textContent = data.width + "×" + data.height + " · " + data.steps + " steps";
+        estSub.textContent = "Gen ETA ~" + data.gen_eta_mid + "  (range " + data.gen_eta_lo + " – " + data.gen_eta_hi + ")";
+      } catch (e) {}
+    }
+
+    function addBubble(msg) {
+      if (seenIds.has(msg.id)) return;
+      seenIds.add(msg.id);
+      const div = document.createElement("div");
+      div.className = "bubble " + (msg.role || "assistant") + (msg.error ? " err" : "");
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = msg.role === "user" ? "You" : "justimagine";
+      div.appendChild(meta);
+      const body = document.createElement("div");
+      body.textContent = msg.text || "";
+      div.appendChild(body);
+      if (msg.preview) {
+        const a = document.createElement("div");
+        a.innerHTML = '<a href="/outputs/' + msg.preview + '" download>Download</a>';
+        div.appendChild(a);
+      }
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function setProgress(data) {
+      statusEl.textContent = data.status || "idle";
+      queueEl.textContent = data.queue_len ? (data.queue_len + " queued") : "";
+      const p = data.progress;
+      if (!data.busy) {
+        lastPct = 0;
+        bar.classList.remove("indeterminate");
+        barFill.style.width = (p === 1 ? "100%" : "0%");
+        pctEl.textContent = "";
+        go.textContent = "Send";
+        return;
+      }
+      go.textContent = "Queue";
+      if (p === null || p === undefined) {
+        bar.classList.add("indeterminate");
+        barFill.style.width = "35%";
+        pctEl.textContent = "";
+      } else {
+        const pct = Math.max(lastPct, Math.max(0, Math.min(100, p * 100)));
+        lastPct = pct;
+        bar.classList.remove("indeterminate");
+        barFill.style.width = pct + "%";
+        pctEl.textContent = Math.round(pct) + "%";
+      }
+    }
+
+    async function refresh() {
+      if (statusAbort) statusAbort.abort();
+      statusAbort = new AbortController();
+      try {
+        const res = await fetch("/api/status", { signal: statusAbort.signal, cache: "no-store" });
+        const data = await res.json();
+        if (data.device) {
+          device.textContent = "GPU: " + data.device +
+            (data.device_mode ? " · " + data.device_mode : "") +
+            (data.has_context ? " · context on" : " · no context") +
+            (data.busy ? " · generating" : "");
+        }
+        setProgress(data);
+        (data.messages || []).forEach(addBubble);
+        const imgName = data.preview || data.context;
+        if (imgName && imgName !== lastPreview) {
+          lastPreview = imgName;
+          preview.src = "/outputs/" + imgName + "?t=" + Date.now();
+          preview.classList.add("show");
+          links.innerHTML = '<a href="/outputs/' + imgName + '" download>Download PNG</a>';
+        }
+        if (!data.has_context && !data.preview) {
+          preview.classList.remove("show");
+          links.textContent = "";
+          lastPreview = null;
+        }
+      } catch (e) {
+        if (e.name !== "AbortError") statusEl.textContent = "status poll failed";
+      }
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      if (!(fd.get("prompt") || "").toString().trim()) return;
+      if (!document.getElementById("clearCtx").checked) fd.delete("clear_context");
+      else fd.set("clear_context", "1");
+      const res = await fetch("/api/generate", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!data.ok) { statusEl.textContent = data.error || "failed"; return; }
+      if (data.summary) estSub.textContent = "Queued — " + data.summary;
+      promptEl.value = "";
+      document.getElementById("image").value = "";
+      document.getElementById("clearCtx").checked = false;
+      await refresh();
+    });
+
+    document.getElementById("clearBtn").addEventListener("click", async () => {
+      await fetch("/api/clear_context", { method: "POST" });
+      await refresh();
+    });
+
+    document.getElementById("image").addEventListener("change", refreshEstimate);
+    promptEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }
+    });
+
+    setInterval(refresh, 500);
+    refresh();
+    refreshEstimate();
+  </script>
+</body>
+</html>

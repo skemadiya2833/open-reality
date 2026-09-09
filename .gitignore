@@ -1,0 +1,24 @@
+# OpenReality monorepo
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
+
+# Never commit local venvs or caches from any project
+**/venv/
+**/.cache/
+**/.cuda_home/
+**/.model_ready
+**/outputs/*
+!**/outputs/.gitkeep
+
+# Large binary artifacts
+*.safetensors
+*.gguf
+*.bin
+*.ckpt
+*.pt
+*.pth
+*.glb
+*.mp4

@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>justthink</title>
+  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1210;
+      --panel: #171c18;
+      --ink: #e8eee6;
+      --muted: #9aa89a;
+      --line: #2a332c;
+      --accent: #c4a35a;
+      --accent-ink: #1a1408;
+      --ok: #7dba7a;
+      --err: #d97979;
+      --user: #243028;
+      --bot: #1a1f1c;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "IBM Plex Sans", system-ui, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 600px at 10% -10%, #1e2a20 0%, transparent 55%),
+        radial-gradient(900px 500px at 100% 0%, #2a2418 0%, transparent 50%),
+        var(--bg);
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 1rem 1.25rem 0.5rem;
+      max-width: 1100px;
+      width: 100%;
+      margin: 0 auto;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 1.45rem;
+      letter-spacing: -0.02em;
+    }
+    header p { margin: 0.25rem 0 0; color: var(--muted); font-size: 0.9rem; }
+    .layout {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1.15fr 0.95fr;
+      gap: 1rem;
+      max-width: 1100px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 0.5rem 1.25rem 1rem;
+      min-height: 0;
+    }
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+    .panel {
+      background: color-mix(in srgb, var(--panel) 92%, black);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .chat {
+      overflow: auto;
+      padding: 1rem;
+      gap: 0.75rem;
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+    }
+    .bubble {
+      max-width: 92%;
+      padding: 0.75rem 0.9rem;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      line-height: 1.4;
+      white-space: pre-wrap;
+    }
+    .bubble.user { align-self: flex-end; background: var(--user); }
+    .bubble.assistant { align-self: flex-start; background: var(--bot); }
+    .bubble .meta { color: var(--muted); font-size: 0.75rem; margin-bottom: 0.35rem; }
+    .bubble.err { border-color: color-mix(in srgb, var(--err) 50%, var(--line)); color: #f0c2c2; }
+    .bubble a { color: var(--accent); }
+    .composer {
+      border-top: 1px solid var(--line);
+      padding: 0.85rem;
+      display: grid;
+      gap: 0.55rem;
+    }
+    textarea, input[type="file"] {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: #0c0f0d;
+      color: var(--ink);
+      border-radius: 10px;
+      padding: 0.7rem 0.8rem;
+      font: inherit;
+    }
+    textarea { min-height: 4.2rem; resize: vertical; }
+    .row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+    .modes label {
+      display: inline-flex;
+      gap: 0.35rem;
+      align-items: center;
+      font-size: 0.88rem;
+      padding: 0.35rem 0.65rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      cursor: pointer;
+    }
+    .modes input { accent-color: var(--accent); }
+    button#go {
+      margin-left: auto;
+      border: 0;
+      border-radius: 999px;
+      padding: 0.65rem 1.1rem;
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+      background: var(--accent);
+      color: var(--accent-ink);
+    }
+    button#go:disabled { opacity: 0.55; cursor: not-allowed; }
+    .progress-wrap {
+      padding: 0.75rem 1rem 0;
+    }
+    .progress-label {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.75rem;
+      color: var(--muted);
+      font-size: 0.85rem;
+      margin-bottom: 0.35rem;
+    }
+    .progress-label #status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #pct { font-variant-numeric: tabular-nums; color: var(--ink); }
+    .hint-line {
+      color: var(--accent);
+      font-size: 0.8rem;
+      min-height: 1.1em;
+      margin: 0.35rem 0 0;
+    }
+    .bar {
+      height: 8px;
+      border-radius: 999px;
+      background: #0c0f0d;
+      border: 1px solid var(--line);
+      overflow: hidden;
+    }
+    .bar > span {
+      display: block;
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #8a7340, var(--accent));
+      transition: width 0.35s ease;
+    }
+    .bar.indeterminate > span {
+      width: 35% !important;
+      animation: slide 1.1s ease-in-out infinite;
+    }
+    @keyframes slide {
+      0% { transform: translateX(-120%); }
+      100% { transform: translateX(320%); }
+    }
+    .estimate {
+      margin: 0.55rem 1rem 0;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 0.65rem 0.85rem;
+      background: #0c0f0d;
+      display: grid;
+      gap: 0.25rem;
+    }
+    .estimate .title { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+    .estimate .big { font-size: 0.95rem; color: var(--ink); }
+    .estimate .sub { font-size: 0.8rem; color: var(--accent); }
+    .viewer-panel { padding: 1rem; gap: 0.75rem; }
+    .viewer-panel label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+    .preview, model-viewer {
+      width: 100%;
+      height: 280px;
+      border-radius: 12px;
+      background: #0a0c0b;
+      border: 1px solid var(--line);
+    }
+    .preview { object-fit: contain; display: none; }
+    .preview.show { display: block; }
+    model-viewer { display: none; }
+    model-viewer.show { display: block; }
+    .hint { color: var(--muted); font-size: 0.82rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>justthink</h1>
+    <p id="device">Checking GPU…</p>
+  </header>
+
+  <div class="layout">
+    <section class="panel">
+      <div class="progress-wrap">
+        <div class="progress-label">
+          <span id="status">idle</span>
+          <span id="pct"></span>
+          <span id="queue"></span>
+        </div>
+        <div class="bar" id="bar"><span id="barFill"></span></div>
+        <p class="hint-line" id="hint"></p>
+      </div>
+      <div class="estimate" id="estimate">
+        <div class="title">Estimate</div>
+        <div class="big" id="estBig">full · shape + texture</div>
+        <div class="sub" id="estSub">Gen ETA loading…</div>
+      </div>
+      <div class="chat" id="chat"></div>
+      <form class="composer" id="form">
+        <textarea id="prompt" name="prompt" placeholder="Describe an object, or attach an image… (Enter to send, Shift+Enter newline)"></textarea>
+        <input id="image" name="image" type="file" accept="image/*" />
+        <div class="row">
+          <div class="modes">
+            <label><input type="radio" name="mode" value="full" checked /> full</label>
+            <label><input type="radio" name="mode" value="shape" /> shape</label>
+            <label><input type="radio" name="mode" value="texture" /> texture</label>
+          </div>
+          <button id="go" type="submit">Send</button>
+        </div>
+        <div class="hint">You can keep typing and queue more prompts while one job runs.</div>
+      </form>
+    </section>
+
+    <section class="panel viewer-panel">
+      <label>Latest preview</label>
+      <img class="preview" id="preview" alt="Generated preview" />
+      <label>Latest mesh</label>
+      <model-viewer id="viewer" camera-controls touch-action="pan-y" exposure="1" shadow-intensity="0.6" alt="Generated mesh"></model-viewer>
+      <div id="links" class="hint"></div>
+    </section>
+  </div>
+
+  <script>
+    const chat = document.getElementById("chat");
+    const form = document.getElementById("form");
+    const go = document.getElementById("go");
+    const promptEl = document.getElementById("prompt");
+    const statusEl = document.getElementById("status");
+    const pctEl = document.getElementById("pct");
+    const queueEl = document.getElementById("queue");
+    const hintEl = document.getElementById("hint");
+    const bar = document.getElementById("bar");
+    const barFill = document.getElementById("barFill");
+    const estBig = document.getElementById("estBig");
+    const estSub = document.getElementById("estSub");
+    const preview = document.getElementById("preview");
+    const viewer = document.getElementById("viewer");
+    const links = document.getElementById("links");
+    const device = document.getElementById("device");
+
+    let seenIds = new Set();
+    let lastMesh = null;
+    let lastPreview = null;
+    let statusAbort = null;
+    let lastPct = 0;
+
+    function selectedMode() {
+      const el = form.querySelector('input[name="mode"]:checked');
+      return el ? el.value : "full";
+    }
+
+    async function refreshEstimate() {
+      const fd = new FormData();
+      fd.set("mode", selectedMode());
+      const hasFile = document.getElementById("image").files && document.getElementById("image").files.length;
+      fd.set("has_image", hasFile ? "1" : "0");
+      try {
+        const res = await fetch("/api/estimate", { method: "POST", body: fd });
+        const data = await res.json();
+        if (!data.ok) return;
+        const labels = { full: "full · shape + texture", shape: "shape only", texture: "texture only" };
+        estBig.textContent = labels[data.mode] || data.mode;
+        estSub.textContent = "Gen ETA ~" + data.gen_eta_mid + "  (range " + data.gen_eta_lo + " – " + data.gen_eta_hi + ")";
+      } catch (e) {}
+    }
+
+    function addBubble(msg) {
+      if (seenIds.has(msg.id)) return;
+      seenIds.add(msg.id);
+      const div = document.createElement("div");
+      div.className = "bubble " + (msg.role || "assistant") + (msg.error ? " err" : "");
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = (msg.role === "user" ? "You" : "justthink") + (msg.mode ? " · " + msg.mode : "");
+      div.appendChild(meta);
+      const body = document.createElement("div");
+      body.textContent = msg.text || "";
+      div.appendChild(body);
+      if (msg.mesh) {
+        const a = document.createElement("div");
+        a.innerHTML = '<a href="/outputs/' + msg.mesh + '" download>Download GLB</a>';
+        div.appendChild(a);
+      }
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function setProgress(data) {
+      statusEl.textContent = data.status || "idle";
+      queueEl.textContent = data.queue_len ? (data.queue_len + " queued") : "";
+      const p = data.progress;
+      if (!data.busy) {
+        lastPct = 0;
+        bar.classList.remove("indeterminate");
+        barFill.style.width = (p === 1 ? "100%" : "0%");
+        pctEl.textContent = "";
+        hintEl.textContent = data.hint || "";
+        go.disabled = false;
+        go.textContent = "Send";
+        return;
+      }
+      go.disabled = false;
+      go.textContent = "Queue";
+      if (p === null || p === undefined) {
+        bar.classList.add("indeterminate");
+        barFill.style.width = "35%";
+        pctEl.textContent = "";
+      } else {
+        const pct = Math.max(lastPct, Math.max(0, Math.min(100, p * 100)));
+        lastPct = pct;
+        bar.classList.remove("indeterminate");
+        barFill.style.width = pct + "%";
+        pctEl.textContent = Math.round(pct) + "%";
+      }
+      let hint = data.hint || "";
+      if (data.eta_left) hint = "~" + data.eta_left + " left" + (hint ? " · " + hint : "");
+      else if (data.elapsed_s >= 3) {
+        hint = hint || "Still working — status stays live while the GPU worker runs.";
+      }
+      hintEl.textContent = hint;
+    }
+
+    async function refresh() {
+      if (statusAbort) statusAbort.abort();
+      statusAbort = new AbortController();
+      try {
+        const res = await fetch("/api/status", { signal: statusAbort.signal, cache: "no-store" });
+        const data = await res.json();
+        if (data.device) {
+          device.textContent =
+            "GPU: " + data.device +
+            (data.busy ? " · generating" : "") +
+            (data.worker_ready === false ? " · starting worker…" : "");
+        }
+        setProgress(data);
+        (data.messages || []).forEach(addBubble);
+        if (data.preview && data.preview !== lastPreview) {
+          lastPreview = data.preview;
+          preview.src = "/outputs/" + data.preview + "?t=" + Date.now();
+          preview.classList.add("show");
+        }
+        if (data.mesh && data.mesh !== lastMesh) {
+          lastMesh = data.mesh;
+          viewer.src = "/outputs/" + data.mesh + "?t=" + Date.now();
+          viewer.classList.add("show");
+          links.innerHTML =
+            '<a href="/outputs/' + data.mesh + '" download>Download GLB</a>' +
+            (data.preview ? ' · <a href="/outputs/' + data.preview + '" download>Download preview</a>' : "");
+        }
+        return data;
+      } catch (err) {
+        if (err.name !== "AbortError") {
+          hintEl.textContent = "status poll failed — retrying…";
+        }
+      }
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const text = (fd.get("prompt") || "").toString().trim();
+      const file = fd.get("image");
+      if (!text && !(file && file.size)) return;
+      try {
+        const res = await fetch("/api/generate", { method: "POST", body: fd });
+        const data = await res.json();
+        if (!data.ok) {
+          statusEl.textContent = data.error || "failed";
+          return;
+        }
+        if (data.summary) estSub.textContent = "Queued — " + data.summary;
+        promptEl.value = "";
+        document.getElementById("image").value = "";
+        await refresh();
+      } catch (err) {
+        statusEl.textContent = String(err);
+      }
+    });
+
+    promptEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        form.requestSubmit();
+      }
+    });
+
+    document.getElementById("image").addEventListener("change", refreshEstimate);
+    form.querySelectorAll('input[name="mode"]').forEach((el) => {
+      el.addEventListener("change", refreshEstimate);
+    });
+
+    setInterval(refresh, 500);
+    refresh();
+    refreshEstimate();
+  </script>
+</body>
+</html>

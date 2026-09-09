@@ -1,0 +1,63 @@
+# Python / tooling
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+outputs/
+# Local env / markers
+.env
+.env.*
+!.env.example
+.model_ready
+
+# Staged CUDA toolkit merge (local Windows build helper; not for git)
+.cuda_home/
+
+# Runtime outputs
+outputs/*
+!outputs/.gitkeep
+
+# Upstream clone + native build artifacts (setup.ps1 clones/builds these)
+Hunyuan3D-2/
+**/build/
+**/*.pyd
+**/*.so
+**/*.dll
+**/dist/
+
+# Model weights / caches if stored in-tree
+.cache/
+**/huggingface/
+*.safetensors
+*.gguf
+*.bin
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.glb
+*.obj
+*.ply
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+outputs/
+.cuda_*
+# Logs / temp
+*.log
+*.tmp
+tmp/
+temp/

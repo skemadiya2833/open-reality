@@ -1,0 +1,107 @@
+# justdream setup - LTX-2.3 Distilled v1.1 NVFP4 + BNB4 (no ComfyUI)
+# Requires: Python 3.10-3.12, CUDA 12.8 / Blackwell (NVFP4), ~22GB disk for model
+# Usage (from justdream/):
+#   powershell -ExecutionPolicy Bypass -File .\setup.ps1
+$ErrorActionPreference = "Stop"
+
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+Set-Location $ScriptDir
+
+# Required for Diffusers Nunchaku Lite remote CUDA kernels
+$env:DIFFUSERS_TRUST_REMOTE_KERNELS = "true"
+
+function Assert-LastExitCode {
+    param([string]$Step)
+    if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+        throw "$Step failed with exit code $LASTEXITCODE"
+    }
+}
+
+function Find-Python312 {
+    $candidates = @()
+    if (Get-Command py -ErrorAction SilentlyContinue) {
+        foreach ($ver in @("3.12", "3.11", "3.10")) {
+            try {
+                $path = & py "-$ver" -c "import sys; print(sys.executable)" 2>$null
+                if ($LASTEXITCODE -eq 0 -and $path) { $candidates += $path.Trim() }
+            } catch {}
+        }
+    }
+    foreach ($p in @(
+            "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",
+            "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe",
+            "$env:LOCALAPPDATA\Programs\Python\Python310\python.exe"
+        )) {
+        if (Test-Path $p) { $candidates += $p }
+    }
+    return $candidates | Select-Object -Unique
+}
+
+Write-Host "==> Locating Python 3.10-3.12..."
+$pyList = @(Find-Python312)
+if ($pyList.Count -eq 0) {
+    Write-Host "ERROR: Need Python 3.10-3.12. Install: winget install -e --id Python.Python.3.12"
+    exit 1
+}
+$BasePython = $pyList[0]
+Write-Host "    Using: $BasePython"
+& $BasePython -c "import sys; v=sys.version_info; assert v.major==3 and 10<=v.minor<=12; print(sys.version)"
+Assert-LastExitCode "Python version check"
+
+Write-Host "==> Creating venv..."
+if (-not (Test-Path "venv")) {
+    & $BasePython -m venv venv
+    Assert-LastExitCode "venv create"
+}
+$VenvPython = Join-Path $ScriptDir "venv\Scripts\python.exe"
+
+Write-Host "==> Upgrading pip..."
+& $VenvPython -m pip install --upgrade pip wheel setuptools
+Assert-LastExitCode "pip bootstrap"
+
+Write-Host "==> Installing PyTorch >=2.7.0 (cu128)..."
+& $VenvPython -m pip install "torch>=2.7.0" torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+Assert-LastExitCode "pytorch"
+
+Write-Host "==> Verifying CUDA / VRAM..."
+$verifyPath = Join-Path $env:TEMP "justdream_cuda_verify.py"
+@'
+import torch
+assert torch.cuda.is_available(), "CUDA missing - need cu128 for Blackwell"
+p = torch.cuda.get_device_properties(0)
+vram = p.total_memory / (1024**3)
+print(torch.cuda.get_device_name(0))
+print("compute %d.%d" % (p.major, p.minor))
+print("VRAM %.1f GB" % vram)
+if p.major < 12:
+    print("WARNING: NVFP4 expects Blackwell (sm_120). This GPU may not run the lite-infer pack.")
+if vram < 26:
+    print("NOTE: Will use model CPU offload by default (weights ~23.9GB resident).")
+'@ | Set-Content -Path $verifyPath -Encoding ASCII
+& $VenvPython $verifyPath
+Assert-LastExitCode "CUDA verify"
+Remove-Item $verifyPath -ErrorAction SilentlyContinue
+
+Write-Host "==> Installing Diffusers (git) + Nunchaku deps..."
+& $VenvPython -m pip install -U "git+https://github.com/huggingface/diffusers.git" transformers accelerate safetensors sentencepiece protobuf bitsandbytes kernels pillow numpy fastapi uvicorn python-multipart huggingface_hub imageio imageio-ffmpeg av
+Assert-LastExitCode "deps"
+
+$setEnv = Join-Path $ScriptDir "env.ps1"
+@'
+$env:DIFFUSERS_TRUST_REMOTE_KERNELS = "true"
+Write-Host "DIFFUSERS_TRUST_REMOTE_KERNELS=true"
+'@ | Set-Content -Path $setEnv -Encoding ASCII
+
+Write-Host "==> Downloading LTX-2.3 Distilled bnb-nf4 (Windows-compatible)..."
+& $VenvPython download_models.py --yes
+Assert-LastExitCode "model download"
+
+New-Item -ItemType Directory -Force -Path "outputs","static" | Out-Null
+
+Write-Host ""
+Write-Host "Done. Activate and run:"
+Write-Host "  .\venv\Scripts\Activate.ps1"
+Write-Host "  . .\env.ps1"
+Write-Host "  python webui.py"
+Write-Host "Open http://127.0.0.1:7862"
+Write-Host "On 16GB cards device_mode=offload is used automatically."

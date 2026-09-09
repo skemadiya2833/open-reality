@@ -1,0 +1,49 @@
+# Python / tooling
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local env / markers
+.env
+.env.*
+!.env.example
+.model_ready
+env.ps1
+
+# Runtime outputs (keep folder via .gitkeep if present)
+outputs/*
+!outputs/.gitkeep
+
+# Hugging Face / torch caches if ever placed inside the project
+.cache/
+**/huggingface/
+*.safetensors
+*.gguf
+*.bin
+*.ckpt
+*.pt
+*.pth
+*.onnx
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+outputs/
+# Logs / temp
+*.log
+*.tmp
+tmp/
+temp/
