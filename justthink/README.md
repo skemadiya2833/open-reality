@@ -56,10 +56,19 @@ CLI alternative: `python app.py` (see help text in the script).
 
 Weights live under Hugging Face hub cache, e.g. `~/.cache/huggingface/hub/models--tencent--Hunyuan3D-2`. Useful size after trim is on the order of **~14GB** (shape + delight + paint), not the 40–50GB first-download trap.
 
+## Quality presets (web UI)
+
+| Mode | Steps | Octree | Use when |
+|------|------:|-------:|----------|
+| **Fast** | 20 | 192 | Quick drafts / iteration |
+| **Balanced** (default) | 30 | 256 | Everyday 16GB comfort |
+| **Quality** | 50 | 384 | Max local Hunyuan detail (slower, more VRAM pressure) |
+
+Mesh sharpness is mostly octree + shape steps. Clean subject photos help a lot. Closed stacks like Meshy use different pipelines — Quality gets you closer, not 1:1 parity.
+
 ## Other models you might choose instead
 
 - Hunyuan **turbo** subfolders — faster, softer quality.
-- Higher octree / more steps — better mesh, hungrier VRAM.
 - Other open image→3D stacks (TripoSR, InstantMesh, etc.) — different quality/speed trade-offs; not wired here.
 
 ## Layout

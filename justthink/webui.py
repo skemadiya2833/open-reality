@@ -135,6 +135,7 @@ def _worker_main(job_q: mp.Queue, event_q: mp.Queue) -> None:
         stem = job["stem"]
         prompt = job.get("prompt")
         image_bytes = job.get("image_bytes")
+        quality = job.get("quality") or "balanced"
 
         emit(type="job_start", job_id=job_id, status="starting…", progress=0.0)
         t0 = time.time()
@@ -156,12 +157,19 @@ def _worker_main(job_q: mp.Queue, event_q: mp.Queue) -> None:
 
             prior = last_mesh if mode == "texture" else None
             mesh, path = run_from_image(
-                i2_3d, pil, mode, stem, prior_mesh=prior, on_status=on_status
+                i2_3d,
+                pil,
+                mode,
+                stem,
+                prior_mesh=prior,
+                on_status=on_status,
+                quality=quality,
             )
             last_mesh = mesh
             took = time.time() - t0
-            from app import format_duration
+            from app import format_duration, get_quality
 
+            q = get_quality(quality)
             emit(
                 type="job_done",
                 job_id=job_id,
@@ -169,7 +177,10 @@ def _worker_main(job_q: mp.Queue, event_q: mp.Queue) -> None:
                 mesh=path.name,
                 mode=mode,
                 took_s=took,
-                text=f"Done ({mode}) · took {format_duration(took)}",
+                text=(
+                    f"Done ({mode} · {q['label']}: {q['shape_steps']} steps / octree {q['octree']})"
+                    f" · took {format_duration(took)}"
+                ),
             )
         except Exception as exc:
             free_vram()
@@ -214,7 +225,7 @@ def _set(**kwargs) -> None:
 
 
 def _snapshot() -> dict:
-    from app import format_duration
+    from app import DEFAULT_QUALITY, format_duration, list_quality_presets
 
     with _state_lock:
         started = _state.get("stage_started")
@@ -256,6 +267,8 @@ def _snapshot() -> dict:
             "worker_ready": _state["worker_ready"],
             "cuda": torch.cuda.is_available(),
             "device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+            "defaults": {"quality": DEFAULT_QUALITY},
+            "qualities": list_quality_presets(),
         }
 
 
@@ -463,24 +476,32 @@ async def status():
 async def estimate(
     mode: str = Form("full"),
     has_image: str = Form("0"),
+    quality: str = Form("balanced"),
 ):
-    from app import estimate_wall_clock_s, format_duration
+    from app import estimate_wall_clock_s, format_duration, get_quality
 
     mode = (mode or "full").strip().lower()
     if mode not in ("full", "shape", "texture"):
         return JSONResponse({"ok": False, "error": "mode must be full|shape|texture"}, status_code=400)
+    q = get_quality(quality)
     wall = estimate_wall_clock_s(
         mode=mode,
         has_image=has_image in ("1", "true", "yes", "on"),
+        quality=q["id"],
     )
     return {
         "ok": True,
         "mode": mode,
+        "quality": q["id"],
+        "quality_label": q["label"],
+        "shape_steps": q["shape_steps"],
+        "octree": q["octree"],
         "gen_eta_lo": format_duration(wall["total_lo_s"]),
         "gen_eta_mid": format_duration(wall["total_mid_s"]),
         "gen_eta_hi": format_duration(wall["total_hi_s"]),
         "summary": (
-            f"{mode} · ETA ~{format_duration(wall['total_mid_s'])} "
+            f"{mode} · {q['label']} ({q['shape_steps']} steps / octree {q['octree']}) · "
+            f"ETA ~{format_duration(wall['total_mid_s'])} "
             f"(range {format_duration(wall['total_lo_s'])}–{format_duration(wall['total_hi_s'])})"
         ),
     }
@@ -489,6 +510,7 @@ async def estimate(
 @app.post("/api/generate")
 async def generate(
     mode: str = Form("full"),
+    quality: str = Form("balanced"),
     prompt: str = Form(""),
     image: UploadFile | None = File(None),
 ):
@@ -499,6 +521,9 @@ async def generate(
     if mode not in ("full", "shape", "texture"):
         return JSONResponse({"ok": False, "error": "mode must be full|shape|texture"}, status_code=400)
 
+    from app import _stamp, estimate_wall_clock_s, format_duration, get_quality
+
+    q = get_quality(quality)
     prompt = (prompt or "").strip()
     image_bytes = None
     filename = None
@@ -509,18 +534,20 @@ async def generate(
     if not image_bytes and not prompt:
         return JSONResponse({"ok": False, "error": "provide a prompt or an image"}, status_code=400)
 
-    from app import _stamp, estimate_wall_clock_s, format_duration
-
     job_id = str(uuid.uuid4())
     stem = _stamp()
-    wall = estimate_wall_clock_s(mode=mode, has_image=bool(image_bytes))
+    wall = estimate_wall_clock_s(mode=mode, has_image=bool(image_bytes), quality=q["id"])
     user_text = prompt if prompt else f"(image: {filename})"
     _append_message(
         {
             "id": str(uuid.uuid4()),
             "role": "user",
             "job_id": job_id,
-            "text": f"{user_text}\nETA ~{format_duration(wall['total_mid_s'])} · {mode}",
+            "text": (
+                f"{user_text}\n"
+                f"ETA ~{format_duration(wall['total_mid_s'])} · {mode} · "
+                f"{q['label']} ({q['shape_steps']}/{q['octree']})"
+            ),
             "mode": mode,
             "ts": time.time(),
         }
@@ -531,6 +558,7 @@ async def generate(
             {
                 "id": job_id,
                 "mode": mode,
+                "quality": q["id"],
                 "stem": stem,
                 "prompt": prompt or None,
                 "image_bytes": image_bytes,
@@ -545,10 +573,14 @@ async def generate(
         "stem": stem,
         "job_id": job_id,
         "queue_len": qlen,
+        "quality": q["id"],
         "gen_eta_mid": format_duration(wall["total_mid_s"]),
         "gen_eta_lo": format_duration(wall["total_lo_s"]),
         "gen_eta_hi": format_duration(wall["total_hi_s"]),
-        "summary": f"ETA ~{format_duration(wall['total_mid_s'])} · {mode}",
+        "summary": (
+            f"ETA ~{format_duration(wall['total_mid_s'])} · {mode} · "
+            f"{q['label']} ({q['shape_steps']}/{q['octree']})"
+        ),
     }
 
 

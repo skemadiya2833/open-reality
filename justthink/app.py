@@ -7,7 +7,7 @@ Both stages run standard full-precision on CUDA.
 
 Sweet-spot defaults (16GB Blackwell comfort):
   - Sequential shape↔paint residency (unload the other stage before each run)
-  - Shape: 30 steps, octree_resolution=256 (not maxed-out 50/384)
+  - Quality presets: Fast (20/192), Balanced (30/256), Quality (50/384)
   - Standard v2-0 checkpoints (not turbo, not 2.1)
 """
 
@@ -43,11 +43,62 @@ MODEL_ID = "tencent/Hunyuan3D-2"
 SHAPE_SUBFOLDER = "hunyuan3d-dit-v2-0"
 PAINT_SUBFOLDER = "hunyuan3d-paint-v2-0"
 
-# Sweet-spot inference (comfort vs quality)
+# Sweet-spot defaults (16GB Blackwell comfort). Override per Quality preset.
 SHAPE_STEPS = 30
 OCTREE_RES = 256
 SDXL_MODEL = "stabilityai/sdxl-turbo"
 SDXL_STEPS = 4
+
+# Fast / Balanced / Quality — mesh detail is dominated by octree + shape steps.
+# Meshy is a different (closed) stack; we can't match it 1:1, but Quality pushes
+# Hunyuan3D-2.0 toward its published high-res settings (50 steps / 384 octree).
+QUALITY_PRESETS: dict[str, dict] = {
+    "fast": {
+        "label": "Fast",
+        "blurb": "Draft mesh · 20 steps · octree 192 · quicker iterates",
+        "shape_steps": 20,
+        "octree": 192,
+        "eta_scale": 0.65,
+    },
+    "balanced": {
+        "label": "Balanced",
+        "blurb": "Default · 30 steps · octree 256 · 16GB comfort",
+        "shape_steps": 30,
+        "octree": 256,
+        "eta_scale": 1.0,
+    },
+    "quality": {
+        "label": "Quality",
+        "blurb": "Max local detail · 50 steps · octree 384 · slower, sharper geometry",
+        "shape_steps": 50,
+        "octree": 384,
+        "eta_scale": 1.75,
+    },
+}
+DEFAULT_QUALITY = "balanced"
+
+
+def get_quality(name: str | None) -> dict:
+    key = (name or DEFAULT_QUALITY).strip().lower()
+    if key not in QUALITY_PRESETS:
+        key = DEFAULT_QUALITY
+    q = dict(QUALITY_PRESETS[key])
+    q["id"] = key
+    return q
+
+
+def list_quality_presets() -> list[dict]:
+    return [
+        {
+            "id": qid,
+            "label": q["label"],
+            "blurb": q["blurb"],
+            "shape_steps": q["shape_steps"],
+            "octree": q["octree"],
+            "default": qid == DEFAULT_QUALITY,
+        }
+        for qid, q in QUALITY_PRESETS.items()
+    ]
 
 
 def format_duration(seconds: float) -> str:
@@ -64,16 +115,19 @@ def format_duration(seconds: float) -> str:
 def estimate_wall_clock_s(
     mode: str = "full",
     has_image: bool = True,
+    quality: str | None = None,
 ) -> dict:
     """Rough ETA for Hunyuan3D-2.0 on 16GB (sequential shape↔paint)."""
     mode = (mode or "full").strip().lower()
-    # Calibrated loosely for warm GPU; first load slower.
+    q = get_quality(quality)
+    # Calibrated loosely for warm GPU @ balanced; first load slower.
     if mode == "shape":
         mid = 180.0
     elif mode == "texture":
         mid = 240.0
     else:
         mid = 420.0
+    mid *= float(q["eta_scale"])
     if not has_image:
         mid += 25.0  # SDXL-Turbo preview
     return {
@@ -81,7 +135,10 @@ def estimate_wall_clock_s(
         "total_mid_s": round(mid),
         "total_hi_s": round(mid * 1.75),
         "mode": mode,
-        "note": "warm GPU; first run after load is slower",
+        "quality": q["id"],
+        "shape_steps": q["shape_steps"],
+        "octree": q["octree"],
+        "note": f"{q['label']}: {q['shape_steps']} steps · octree {q['octree']}",
     }
 
 
@@ -214,10 +271,19 @@ class ImageTo3D:
                 image = image.convert("RGBA")
         return image
 
-    def image_to_shape(self, image: Image.Image, on_status=None):
+    def image_to_shape(
+        self,
+        image: Image.Image,
+        on_status=None,
+        shape_steps: int | None = None,
+        octree: int | None = None,
+    ):
         def status(msg: str, progress: float | None = None) -> None:
             if on_status is not None:
                 on_status(msg, progress)
+
+        steps = int(shape_steps if shape_steps is not None else SHAPE_STEPS)
+        octree_res = int(octree if octree is not None else OCTREE_RES)
 
         # Unload paint first so peaks do not overlap (comfort headroom).
         status("freeing paint VRAM…", 0.18)
@@ -226,11 +292,11 @@ class ImageTo3D:
         self.load_shape()
         status("preparing image…", 0.28)
         image = self.prepare_image(image)
-        status("shape diffusion (first step is slow)…", 0.32)
+        status(f"shape diffusion {steps} steps · octree {octree_res}…", 0.32)
         mesh = self.shape(
             image=image,
-            num_inference_steps=SHAPE_STEPS,
-            octree_resolution=OCTREE_RES,
+            num_inference_steps=steps,
+            octree_resolution=octree_res,
         )[0]
         status("shape done", 0.72)
         return mesh
@@ -350,11 +416,18 @@ def run_from_image(
     prior_mesh=None,
     viewer: LiveViewer | None = None,
     on_status=None,
+    quality: str | None = None,
 ):
+    q = get_quality(quality)
     mesh = prior_mesh
     if mode in ("full", "shape"):
-        print("[run] shape generation...")
-        mesh = i2_3d.image_to_shape(image, on_status=on_status)
+        print(f"[run] shape generation ({q['id']}: {q['shape_steps']} steps, octree {q['octree']})...")
+        mesh = i2_3d.image_to_shape(
+            image,
+            on_status=on_status,
+            shape_steps=q["shape_steps"],
+            octree=q["octree"],
+        )
         if mode == "shape":
             path = _save_mesh(mesh, f"{stem}_shape")
             i2_3d.unload_shape()
@@ -384,7 +457,11 @@ def main() -> None:
     print(HELP)
     print(f"Device: {torch.cuda.get_device_name(0)}")
     print(f"Outputs: {OUTPUT_DIR}")
-    print(f"Sweet spot: steps={SHAPE_STEPS}, octree={OCTREE_RES}, native v2-0\n")
+    q = get_quality(DEFAULT_QUALITY)
+    print(
+        f"Quality presets: Fast/Balanced/Quality · default {q['label']} "
+        f"({q['shape_steps']} steps / octree {q['octree']}), native v2-0\n"
+    )
 
     t2i = TextToImage()
     i2_3d = ImageTo3D()

@@ -104,6 +104,21 @@
     }
     textarea { min-height: 4.2rem; resize: vertical; }
     .row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+    .qualities { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+    button.quality {
+      border: 1px solid var(--line);
+      background: #0c0f0d;
+      color: var(--muted);
+      border-radius: 999px;
+      padding: 0.4rem 0.75rem;
+      font: inherit;
+      cursor: pointer;
+    }
+    button.quality.active {
+      border-color: var(--accent);
+      color: var(--ink);
+      background: #1a1810;
+    }
     .modes label {
       display: inline-flex;
       gap: 0.35rem;
@@ -225,6 +240,8 @@
       </div>
       <div class="chat" id="chat"></div>
       <form class="composer" id="form">
+        <div class="qualities" id="qualities"></div>
+        <input type="hidden" name="quality" id="quality" value="balanced" />
         <textarea id="prompt" name="prompt" placeholder="Describe an object, or attach an image… (Enter to send, Shift+Enter newline)"></textarea>
         <input id="image" name="image" type="file" accept="image/*" />
         <div class="row">
@@ -235,7 +252,7 @@
           </div>
           <button id="go" type="submit">Send</button>
         </div>
-        <div class="hint">You can keep typing and queue more prompts while one job runs.</div>
+        <div class="hint">Quality = 50 steps / octree 384 (max local detail). Meshy won’t match 1:1. Queue while a job runs.</div>
       </form>
     </section>
 
@@ -265,21 +282,44 @@
     const viewer = document.getElementById("viewer");
     const links = document.getElementById("links");
     const device = document.getElementById("device");
+    const qualityEl = document.getElementById("quality");
+    const qualitiesEl = document.getElementById("qualities");
 
     let seenIds = new Set();
     let lastMesh = null;
     let lastPreview = null;
     let statusAbort = null;
     let lastPct = 0;
+    let qualities = [];
 
     function selectedMode() {
       const el = form.querySelector('input[name="mode"]:checked');
       return el ? el.value : "full";
     }
 
+    function renderQualities(list) {
+      qualities = list || [];
+      qualitiesEl.innerHTML = "";
+      qualities.forEach((q) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "quality" + (q.id === qualityEl.value ? " active" : "");
+        b.textContent = q.label;
+        b.title = q.blurb || "";
+        b.addEventListener("click", () => {
+          qualityEl.value = q.id;
+          [...qualitiesEl.children].forEach((c) => c.classList.remove("active"));
+          b.classList.add("active");
+          refreshEstimate();
+        });
+        qualitiesEl.appendChild(b);
+      });
+    }
+
     async function refreshEstimate() {
       const fd = new FormData();
       fd.set("mode", selectedMode());
+      fd.set("quality", qualityEl.value || "balanced");
       const hasFile = document.getElementById("image").files && document.getElementById("image").files.length;
       fd.set("has_image", hasFile ? "1" : "0");
       try {
@@ -287,7 +327,10 @@
         const data = await res.json();
         if (!data.ok) return;
         const labels = { full: "full · shape + texture", shape: "shape only", texture: "texture only" };
-        estBig.textContent = labels[data.mode] || data.mode;
+        const qbit = data.quality_label
+          ? " · " + data.quality_label + " (" + data.shape_steps + "/" + data.octree + ")"
+          : "";
+        estBig.textContent = (labels[data.mode] || data.mode) + qbit;
         estSub.textContent = "Gen ETA ~" + data.gen_eta_mid + "  (range " + data.gen_eta_lo + " – " + data.gen_eta_hi + ")";
       } catch (e) {}
     }
@@ -359,6 +402,10 @@
             "GPU: " + data.device +
             (data.busy ? " · generating" : "") +
             (data.worker_ready === false ? " · starting worker…" : "");
+        }
+        if ((data.qualities || []).length && !qualitiesEl.children.length) {
+          if (data.defaults && data.defaults.quality) qualityEl.value = data.defaults.quality;
+          renderQualities(data.qualities);
         }
         setProgress(data);
         (data.messages || []).forEach(addBubble);
