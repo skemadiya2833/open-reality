@@ -56,9 +56,10 @@ Write-Host "==> Upgrading pip..."
 & $VenvPython -m pip install --upgrade pip wheel setuptools
 Assert-LastExitCode "pip bootstrap"
 
-Write-Host "==> Installing PyTorch >=2.7.0 (cu128)..."
-& $VenvPython -m pip install "torch>=2.7.0" torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
-Assert-LastExitCode "pytorch"
+Write-Host "==> Linking / installing shared PyTorch cu128 (repo .shared/torch-cu128)..."
+$LinkTorch = Join-Path (Split-Path $ScriptDir -Parent) "link_shared_torch.ps1"
+& $LinkTorch -Project justimagine -InstallIfMissing
+Assert-LastExitCode "shared pytorch"
 
 Write-Host "==> Verifying CUDA..."
 & $VenvPython -c "import torch; assert torch.cuda.is_available(), 'CUDA missing'; p=torch.cuda.get_device_properties(0); print(torch.cuda.get_device_name(0), 'VRAM %.1f GB' % (p.total_memory/1024**3))"

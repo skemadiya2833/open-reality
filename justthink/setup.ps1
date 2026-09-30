@@ -181,9 +181,10 @@ Write-Host "==> Upgrading pip / wheel / setuptools / cmake / ninja / pybind11...
 & $VenvPython -m pip install --upgrade pip wheel setuptools cmake ninja pybind11
 Assert-LastExitCode "pip bootstrap"
 
-Write-Host "==> Installing PyTorch >=2.7.0 (cu128)..."
-& $VenvPython -m pip install "torch>=2.7.0" torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
-Assert-LastExitCode "pytorch install"
+Write-Host "==> Linking / installing shared PyTorch cu128 (repo .shared/torch-cu128)..."
+$LinkTorch = Join-Path (Split-Path $ScriptDir -Parent) "link_shared_torch.ps1"
+& $LinkTorch -Project justthink -InstallIfMissing
+Assert-LastExitCode "shared pytorch"
 
 Write-Host "==> Verifying CUDA..."
 $verifyPath = Join-Path $env:TEMP "hy3d_cuda_verify.py"

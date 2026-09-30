@@ -46,7 +46,7 @@ If you have more VRAM (24GB+ / 32GB+), raise resolution, steps, or frame counts 
 
 ## Quick start
 
-Each project is self-contained (own `venv`). From a PowerShell prompt:
+Each project keeps its own `venv`, but **justimagine** and **justthink** share one cu128 PyTorch copy via junctions under `.shared/torch-cu128/` (~4.1 GB once, not twice). `setup.ps1` / `link_shared_torch.ps1` wire that automatically. justdream is separate. From a PowerShell prompt:
 
 ```powershell
 # 3D

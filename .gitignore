@@ -7,6 +7,7 @@ Thumbs.db
 
 # Never commit local venvs or caches from any project
 **/venv/
+**/.shared/
 **/.cache/
 **/.cuda_home/
 **/.model_ready
