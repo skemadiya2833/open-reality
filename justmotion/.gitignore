@@ -1,0 +1,8 @@
+# justmotion local
+venv/
+outputs/*
+!outputs/.gitkeep
+work/
+__pycache__/
+*.pyc
+.model_ready

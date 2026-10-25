@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>justmotion</title>
+  <style>
+    :root {
+      --bg: #12110f;
+      --panel: #1a1916;
+      --ink: #f2efe8;
+      --muted: #9a958a;
+      --line: #2e2c27;
+      --accent: #d4a574;
+      --accent-ink: #1a1208;
+      --user: #2a2620;
+      --bot: #1e1c18;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "IBM Plex Sans", system-ui, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(900px 500px at 0% 0%, #2a2418 0%, transparent 55%),
+        radial-gradient(700px 400px at 100% 10%, #1e2420 0%, transparent 50%),
+        var(--bg);
+      display: flex;
+      flex-direction: column;
+    }
+    header { max-width: 1180px; width: 100%; margin: 0 auto; padding: 1rem 1.25rem 0.5rem; }
+    header h1 { margin: 0; font-size: 1.5rem; letter-spacing: -0.03em; }
+    header p { margin: 0.25rem 0 0; color: var(--muted); font-size: 0.9rem; }
+    .layout {
+      flex: 1; display: grid; grid-template-columns: 1.1fr 1fr; gap: 1rem;
+      max-width: 1180px; width: 100%; margin: 0 auto; padding: 0.5rem 1.25rem 1rem; min-height: 0;
+    }
+    @media (max-width: 960px) { .layout { grid-template-columns: 1fr; } }
+    .panel {
+      background: color-mix(in srgb, var(--panel) 92%, black);
+      border: 1px solid var(--line); border-radius: 14px; min-height: 0;
+      display: flex; flex-direction: column;
+    }
+    .progress-wrap { padding: 0.75rem 1rem 0; }
+    .progress-label { display: flex; justify-content: space-between; gap: 0.75rem; color: var(--muted); font-size: 0.85rem; margin-bottom: 0.35rem; }
+    .progress-label #status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #pct { font-variant-numeric: tabular-nums; color: var(--ink); }
+    .bar { height: 8px; border-radius: 999px; background: #0c0b09; border: 1px solid var(--line); overflow: hidden; }
+    .bar > span { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, #8a6a40, var(--accent)); transition: width 0.35s ease; }
+    .bar.indeterminate > span { width: 35% !important; animation: slide 1.1s ease-in-out infinite; }
+    @keyframes slide { 0% { transform: translateX(-120%); } 100% { transform: translateX(320%); } }
+    .estimate {
+      margin: 0.55rem 1rem 0; border: 1px solid var(--line); border-radius: 12px; padding: 0.65rem 0.85rem;
+      background: #0c0b09; display: grid; gap: 0.25rem;
+    }
+    .estimate .title { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+    .estimate .big { font-size: 0.95rem; color: var(--ink); }
+    .estimate .sub { font-size: 0.8rem; color: var(--accent); }
+    .stages { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.5rem 1rem 0; }
+    .stages span {
+      font-size: 0.72rem; padding: 0.2rem 0.5rem; border-radius: 999px;
+      border: 1px solid var(--line); color: var(--muted);
+    }
+    .stages span.on { color: var(--accent-ink); background: var(--accent); border-color: transparent; }
+    .chat { overflow: auto; padding: 1rem; gap: 0.75rem; display: flex; flex-direction: column; flex: 1; }
+    .bubble { max-width: 94%; padding: 0.75rem 0.9rem; border-radius: 12px; border: 1px solid var(--line); line-height: 1.4; white-space: pre-wrap; }
+    .bubble.user { align-self: flex-end; background: var(--user); }
+    .bubble.assistant { align-self: flex-start; background: var(--bot); }
+    .bubble .meta { color: var(--muted); font-size: 0.75rem; margin-bottom: 0.35rem; }
+    .bubble.err { color: #f0c2c2; }
+    .bubble img.thumb {
+      margin-top: 0.5rem; max-width: 100%; max-height: 160px; border-radius: 8px; border: 1px solid var(--line);
+    }
+    .composer { border-top: 1px solid var(--line); padding: 0.85rem; display: grid; gap: 0.55rem; }
+    textarea, input, select {
+      width: 100%; border: 1px solid var(--line); background: #0c0b09; color: var(--ink);
+      border-radius: 10px; padding: 0.65rem 0.8rem; font: inherit;
+    }
+    textarea { min-height: 4rem; resize: vertical; }
+    .row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+    @media (max-width: 600px) { .grid2 { grid-template-columns: 1fr; } }
+    label.chk { font-size: 0.85rem; display: inline-flex; gap: 0.35rem; align-items: center; color: var(--muted); }
+    label.field { display: grid; gap: 0.25rem; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+    button {
+      border: 0; border-radius: 999px; padding: 0.65rem 1.1rem; font: inherit; font-weight: 650;
+      cursor: pointer; background: var(--accent); color: var(--accent-ink);
+    }
+    button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+    .viewer-panel { padding: 1rem; gap: 0.75rem; overflow: auto; }
+    .viewer-panel > .lab { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+    .gallery {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 0.5rem;
+    }
+    .gallery img {
+      width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 10px;
+      border: 1px solid var(--line); background: #0a0908; cursor: pointer;
+    }
+    .preview {
+      width: 100%; max-height: 320px; object-fit: contain; border-radius: 12px;
+      background: #0a0908; border: 1px solid var(--line); display: none;
+    }
+    .preview.show { display: block; }
+    .hint { color: var(--muted); font-size: 0.82rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>justmotion</h1>
+    <p id="device">Checking…</p>
+  </header>
+  <div class="layout">
+    <section class="panel">
+      <div class="progress-wrap">
+        <div class="progress-label"><span id="status">idle</span><span id="pct"></span><span id="queue"></span></div>
+        <div class="bar" id="bar"><span id="barFill"></span></div>
+      </div>
+      <div class="stages" id="stages">
+        <span data-s="keyframes">keyframes</span>
+        <span data-s="interpolate">interpolate</span>
+        <span data-s="upscale">DLSS / NR</span>
+      </div>
+      <div class="estimate">
+        <div class="title">Estimate</div>
+        <div class="big" id="estBig">6 keyframes · 768px · DLSS/NR</div>
+        <div class="sub" id="estSub">ETA loading…</div>
+      </div>
+      <div class="chat" id="chat"></div>
+      <form class="composer" id="form">
+        <textarea id="prompt" name="prompt" placeholder="Describe the scene / motion… (optional if you attach a video). Enter to send."></textarea>
+        <div class="grid2">
+          <label class="field">Optional first image
+            <input id="image" name="image" type="file" accept="image/*" />
+          </label>
+          <label class="field">Optional video
+            <input id="video" name="video" type="file" accept="video/*" />
+          </label>
+        </div>
+        <div class="grid2">
+          <label class="field">keyframes
+            <input id="keyframes" name="keyframes" type="number" value="6" min="2" max="16" />
+          </label>
+          <label class="field">gen size
+            <input id="gen_width" name="gen_width" type="number" value="768" min="512" max="1024" step="64" />
+          </label>
+          <label class="field">nr-width
+            <input id="nr_width" name="nr_width" type="number" value="1920" min="0" max="3840" />
+          </label>
+          <label class="field">target fps
+            <input id="target_fps" name="target_fps" type="number" value="24" min="12" max="60" />
+          </label>
+          <label class="field">interpolate
+            <select id="interp_mode" name="interp_mode">
+              <option value="blend" selected>blend (safer)</option>
+              <option value="xfade">xfade (safest)</option>
+              <option value="mci">mci (morphy)</option>
+            </select>
+          </label>
+        </div>
+        <div class="row">
+          <label class="chk"><input type="checkbox" id="skip_nr" name="skip_nr" value="1" checked /> skip NR (recommended for AI)</label>
+          <button type="button" class="ghost" id="estBtn">Refresh ETA</button>
+          <button id="go" type="submit">Dream video</button>
+        </div>
+        <div class="hint">
+          Prompt → same-subject keyframes (shown live) → gentle blend between them → optional DLSS upscale.
+          Keep keyframes ≤6. Leave “skip NR” on for AI cats/faces — NR is tuned for game footage.
+        </div>
+      </form>
+    </section>
+    <section class="panel viewer-panel">
+      <div class="lab">Keyframes (live)</div>
+      <div class="gallery" id="gallery"></div>
+      <div class="lab" style="margin-top:0.75rem">Result video</div>
+      <video class="preview" id="preview" controls playsinline></video>
+      <div id="links" class="hint"></div>
+    </section>
+  </div>
+  <script>
+    const chat = document.getElementById("chat");
+    const form = document.getElementById("form");
+    const go = document.getElementById("go");
+    const statusEl = document.getElementById("status");
+    const pctEl = document.getElementById("pct");
+    const queueEl = document.getElementById("queue");
+    const bar = document.getElementById("bar");
+    const barFill = document.getElementById("barFill");
+    const estBig = document.getElementById("estBig");
+    const estSub = document.getElementById("estSub");
+    const preview = document.getElementById("preview");
+    const links = document.getElementById("links");
+    const gallery = document.getElementById("gallery");
+    const device = document.getElementById("device");
+    let seenIds = new Set();
+    let seenKf = new Set();
+    let lastPreview = null;
+    let lastPct = 0;
+
+    function stageOn(name) {
+      document.querySelectorAll("#stages span").forEach((el) => {
+        el.classList.toggle("on", el.dataset.s === name);
+      });
+    }
+
+    function addKeyframe(name) {
+      if (!name || seenKf.has(name)) return;
+      seenKf.add(name);
+      const img = document.createElement("img");
+      img.src = "/outputs/" + name + "?t=" + Date.now();
+      img.alt = name;
+      img.title = name;
+      img.addEventListener("click", () => window.open(img.src, "_blank"));
+      gallery.appendChild(img);
+    }
+
+    async function refreshEstimate() {
+      const fd = new FormData(form);
+      fd.set("has_image", document.getElementById("image").files?.length ? "1" : "0");
+      fd.set("has_video", document.getElementById("video").files?.length ? "1" : "0");
+      try {
+        const res = await fetch("/api/estimate", { method: "POST", body: fd });
+        const data = await res.json();
+        if (!data.ok) return;
+        estBig.textContent = data.summary;
+        estSub.textContent = "ETA ~" + data.eta_mid + "  (range " + data.eta_lo + " – " + data.eta_hi + ")";
+      } catch (e) {}
+    }
+
+    function addBubble(msg) {
+      if (seenIds.has(msg.id)) return;
+      seenIds.add(msg.id);
+      const div = document.createElement("div");
+      div.className = "bubble " + (msg.role || "assistant") + (msg.error ? " err" : "");
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = msg.role === "user" ? "You" : "justmotion";
+      div.appendChild(meta);
+      const body = document.createElement("div");
+      body.textContent = msg.text || "";
+      div.appendChild(body);
+      if (msg.preview && msg.preview_kind !== "video") {
+        const img = document.createElement("img");
+        img.className = "thumb";
+        img.src = "/outputs/" + msg.preview + "?t=" + Date.now();
+        div.appendChild(img);
+      }
+      if (msg.preview && msg.preview_kind === "video") {
+        const a = document.createElement("div");
+        a.innerHTML = '<a href="/outputs/' + msg.preview + '" download>Download MP4</a>';
+        div.appendChild(a);
+      }
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function setProgress(data) {
+      statusEl.textContent = data.status || "idle";
+      queueEl.textContent = data.queue_len ? (data.queue_len + " queued") : "";
+      if (data.stage) stageOn(data.stage);
+      const p = data.progress;
+      if (!data.busy) {
+        lastPct = 0;
+        bar.classList.remove("indeterminate");
+        barFill.style.width = (p === 1 ? "100%" : "0%");
+        pctEl.textContent = "";
+        go.textContent = "Dream video";
+        if (data.last_took) estSub.textContent = "Last run took " + data.last_took;
+        return;
+      }
+      go.textContent = "Queue";
+      if (p === null || p === undefined) {
+        bar.classList.add("indeterminate");
+        barFill.style.width = "35%";
+        pctEl.textContent = "";
+      } else {
+        const pct = Math.max(lastPct, Math.max(0, Math.min(100, p * 100)));
+        lastPct = pct;
+        bar.classList.remove("indeterminate");
+        barFill.style.width = pct + "%";
+        pctEl.textContent = Math.round(pct) + "%";
+      }
+    }
+
+    async function refresh() {
+      try {
+        const res = await fetch("/api/status", { cache: "no-store" });
+        const data = await res.json();
+        device.textContent = (data.device ? ("GPU: " + data.device) : "GPU: —")
+          + (data.busy ? " · running" : " · ready");
+        setProgress(data);
+        (data.messages || []).forEach(addBubble);
+        (data.keyframes || []).forEach(addKeyframe);
+        if (data.preview && data.preview !== lastPreview) {
+          lastPreview = data.preview;
+          preview.src = "/outputs/" + data.preview + "?t=" + Date.now();
+          preview.classList.add("show");
+          links.innerHTML = '<a href="/outputs/' + data.preview + '" download>Download MP4</a>';
+        }
+      } catch (e) {
+        statusEl.textContent = "status poll failed";
+      }
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      if (!document.getElementById("skip_nr").checked) fd.delete("skip_nr");
+      else fd.set("skip_nr", "1");
+      const res = await fetch("/api/generate", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!data.ok) { statusEl.textContent = data.error || "failed"; return; }
+      if (data.summary) estSub.textContent = "Queued — " + data.summary;
+      document.getElementById("prompt").value = "";
+      // keep files so user can re-queue; clear if you prefer
+      await refresh();
+    });
+
+    ["image","video","keyframes","gen_width","nr_width","skip_nr","prompt"].forEach((id) => {
+      const el = document.getElementById(id);
+      el.addEventListener("change", refreshEstimate);
+      el.addEventListener("input", refreshEstimate);
+    });
+    document.getElementById("estBtn").addEventListener("click", refreshEstimate);
+    document.getElementById("prompt").addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }
+    });
+
+    setInterval(refresh, 600);
+    refresh();
+    refreshEstimate();
+  </script>
+</body>
+</html>

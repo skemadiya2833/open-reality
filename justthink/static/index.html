@@ -241,7 +241,7 @@
       <div class="chat" id="chat"></div>
       <form class="composer" id="form">
         <div class="qualities" id="qualities"></div>
-        <input type="hidden" name="quality" id="quality" value="balanced" />
+        <input type="hidden" name="quality" id="quality" value="optimum" />
         <textarea id="prompt" name="prompt" placeholder="Describe an object, or attach an image… (Enter to send, Shift+Enter newline)"></textarea>
         <input id="image" name="image" type="file" accept="image/*" />
         <div class="row">
@@ -252,7 +252,7 @@
           </div>
           <button id="go" type="submit">Send</button>
         </div>
-        <div class="hint">Quality = 50 steps / octree 384 (max local detail). Meshy won’t match 1:1. Queue while a job runs.</div>
+        <div class="hint">Performance · Optimum (default) · Quality. Pick speed vs detail; queue while a job runs.</div>
       </form>
     </section>
 
@@ -319,7 +319,7 @@
     async function refreshEstimate() {
       const fd = new FormData();
       fd.set("mode", selectedMode());
-      fd.set("quality", qualityEl.value || "balanced");
+      fd.set("quality", qualityEl.value || "optimum");
       const hasFile = document.getElementById("image").files && document.getElementById("image").files.length;
       fd.set("has_image", hasFile ? "1" : "0");
       try {

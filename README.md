@@ -11,6 +11,8 @@ Three small apps share the same idea: a Windows-friendly setup script, a Python 
 | [`justthink/`](justthink/) | Text or image → textured **3D mesh (GLB)** | http://127.0.0.1:7860 | RTX 5060 Ti **16GB** Blackwell |
 | [`justimagine/`](justimagine/) | Text → image, and **contextual image editing** | http://127.0.0.1:7861 | Same 16GB card, full GPU residency |
 | [`justdream/`](justdream/) | Text → **video + audio** (short clips) | http://127.0.0.1:7862 | Same card via **CPU offload**; **bnb-nf4** (Nunchaku is Linux-only) |
+| [`justmotion/`](justmotion/) | Prompt / image / video → **keyframes → interpolate → DLSS/NR video** | http://127.0.0.1:7863 | justimagine UI + FLUX keyframes + exp_dlss upscale |
+
 
 ```
 OpenReality/
@@ -18,7 +20,8 @@ OpenReality/
 ├── .gitignore
 ├── justthink/         ← 3D (Hunyuan3D-2.0)
 ├── justimagine/       ← images (FLUX.2 klein 4B)
-└── justdream/         ← video (LTX-2.3 Distilled bnb-nf4, Windows)
+├── justdream/         ← video (LTX-2.3 Distilled bnb-nf4, Windows)
+└── justmotion/        ← image+motion → DLSS video (UI + exp_dlss stages)
 ```
 
 ## Why this exists
@@ -63,13 +66,21 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1
 python webui.py
 # → http://127.0.0.1:7861
 
-# Video
+# Video (LTX)
 cd ..\justdream
 powershell -ExecutionPolicy Bypass -File .\setup.ps1
 .\venv\Scripts\Activate.ps1
 . .\env.ps1   # DIFFUSERS_TRUST_REMOTE_KERNELS=true
 python webui.py
 # → http://127.0.0.1:7862
+
+# Image + motion video (justimagine UI → keyframes → DLSS)
+cd ..\justimagine
+.\venv\Scripts\Activate.ps1
+cd ..\justmotion
+$env:EXP_DLSS_ROOT = "D:\Workspace\Devoids\FULLONVIDEOEDITING\the-exp-dlss"
+python webui.py
+# → http://127.0.0.1:7863
 ```
 
 Model weights land in the Hugging Face hub cache (`~/.cache/huggingface/...`), not in this git repo. **Do not commit `venv/`, `outputs/`, or weight files** — see `.gitignore`.
@@ -78,8 +89,8 @@ Model weights land in the Hugging Face hub cache (`~/.cache/huggingface/...`), n
 
 1. **Separate process for generation** so `/api/status` stays responsive while CUDA work runs (GIL / long loads do not freeze the UI).
 2. **Chat-style UI** — keep typing / queue prompts; see live status and results.
-3. **Ports differ** so you can run all three at once: `7860` / `7861` / `7862`.
-4. **Licenses follow upstream models** (Apache 2.0 for FLUX.2 klein 4B; LTX and Hunyuan have their own terms — read each model card before commercial use).
+3. **Ports differ** so you can run them at once: `7860` / `7861` / `7862` / `7863` (justmotion).
+4. **Licenses follow upstream models** (Apache 2.0 for FLUX.2 klein 4B; LTX and Hunyuan have their own terms — read each model card before commercial use). justmotion’s NR path uses community `video2dlssnr` (not NVIDIA Frame Generation).
 
 
 #Results:

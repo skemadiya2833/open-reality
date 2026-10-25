@@ -135,7 +135,7 @@ def _worker_main(job_q: mp.Queue, event_q: mp.Queue) -> None:
         stem = job["stem"]
         prompt = job.get("prompt")
         image_bytes = job.get("image_bytes")
-        quality = job.get("quality") or "balanced"
+        quality = job.get("quality") or "optimum"
 
         emit(type="job_start", job_id=job_id, status="starting…", progress=0.0)
         t0 = time.time()
@@ -476,7 +476,7 @@ async def status():
 async def estimate(
     mode: str = Form("full"),
     has_image: str = Form("0"),
-    quality: str = Form("balanced"),
+    quality: str = Form("optimum"),
 ):
     from app import estimate_wall_clock_s, format_duration, get_quality
 
@@ -510,7 +510,7 @@ async def estimate(
 @app.post("/api/generate")
 async def generate(
     mode: str = Form("full"),
-    quality: str = Form("balanced"),
+    quality: str = Form("optimum"),
     prompt: str = Form(""),
     image: UploadFile | None = File(None),
 ):

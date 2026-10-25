@@ -7,7 +7,7 @@ Both stages run standard full-precision on CUDA.
 
 Sweet-spot defaults (16GB Blackwell comfort):
   - Sequential shape↔paint residency (unload the other stage before each run)
-  - Quality presets: Fast (20/192), Balanced (30/256), Quality (50/384)
+  - Quality presets: Performance (20/192), Optimum (30/256), Quality (50/384)
   - Standard v2-0 checkpoints (not turbo, not 2.1)
 """
 
@@ -49,20 +49,20 @@ OCTREE_RES = 256
 SDXL_MODEL = "stabilityai/sdxl-turbo"
 SDXL_STEPS = 4
 
-# Fast / Balanced / Quality — mesh detail is dominated by octree + shape steps.
+# Performance / Optimum / Quality — mesh detail is dominated by octree + shape steps.
 # Meshy is a different (closed) stack; we can't match it 1:1, but Quality pushes
 # Hunyuan3D-2.0 toward its published high-res settings (50 steps / 384 octree).
 QUALITY_PRESETS: dict[str, dict] = {
-    "fast": {
-        "label": "Fast",
-        "blurb": "Draft mesh · 20 steps · octree 192 · quicker iterates",
+    "performance": {
+        "label": "Performance",
+        "blurb": "Speed first · 20 steps · octree 192 · quick drafts",
         "shape_steps": 20,
         "octree": 192,
         "eta_scale": 0.65,
     },
-    "balanced": {
-        "label": "Balanced",
-        "blurb": "Default · 30 steps · octree 256 · 16GB comfort",
+    "optimum": {
+        "label": "Optimum",
+        "blurb": "Best balance · 30 steps · octree 256 · 16GB comfort (default)",
         "shape_steps": 30,
         "octree": 256,
         "eta_scale": 1.0,
@@ -75,11 +75,17 @@ QUALITY_PRESETS: dict[str, dict] = {
         "eta_scale": 1.75,
     },
 }
-DEFAULT_QUALITY = "balanced"
+# Legacy IDs from earlier Fast/Balanced naming.
+_QUALITY_ALIASES = {
+    "fast": "performance",
+    "balanced": "optimum",
+}
+DEFAULT_QUALITY = "optimum"
 
 
 def get_quality(name: str | None) -> dict:
     key = (name or DEFAULT_QUALITY).strip().lower()
+    key = _QUALITY_ALIASES.get(key, key)
     if key not in QUALITY_PRESETS:
         key = DEFAULT_QUALITY
     q = dict(QUALITY_PRESETS[key])
@@ -120,7 +126,7 @@ def estimate_wall_clock_s(
     """Rough ETA for Hunyuan3D-2.0 on 16GB (sequential shape↔paint)."""
     mode = (mode or "full").strip().lower()
     q = get_quality(quality)
-    # Calibrated loosely for warm GPU @ balanced; first load slower.
+    # Calibrated loosely for warm GPU @ optimum; first load slower.
     if mode == "shape":
         mid = 180.0
     elif mode == "texture":
@@ -384,9 +390,11 @@ class LiveViewer:
 
 HELP = """
 Commands:
-  <text prompt>              text → image → 3D (per current mode)
-  img <path>                 image → 3D (per current mode)
+  <text prompt>              text → image → 3D (per current mode / quality)
+  img <path>                 image → 3D (per current mode / quality)
   mode full|shape|texture    set pipeline mode (default: full)
+  quality performance|optimum|quality
+                             set detail preset (default: optimum)
   help                       show this help
   quit / exit                leave
 
@@ -394,6 +402,11 @@ Modes:
   full     shape + texture
   shape    bare mesh only
   texture  texture an existing mesh from last shape (needs prior shape or img flow)
+
+Presets:
+  performance  20 steps · octree 192 · speed
+  optimum      30 steps · octree 256 · default balance
+  quality      50 steps · octree 384 · max local detail
 """
 
 
@@ -459,7 +472,7 @@ def main() -> None:
     print(f"Outputs: {OUTPUT_DIR}")
     q = get_quality(DEFAULT_QUALITY)
     print(
-        f"Quality presets: Fast/Balanced/Quality · default {q['label']} "
+        f"Presets: Performance / Optimum / Quality · default {q['label']} "
         f"({q['shape_steps']} steps / octree {q['octree']}), native v2-0\n"
     )
 
@@ -467,13 +480,14 @@ def main() -> None:
     i2_3d = ImageTo3D()
     viewer = LiveViewer()
     mode = "full"
+    quality = DEFAULT_QUALITY
     last_mesh = None
     last_image: Image.Image | None = None
 
     while True:
         viewer.poll()
         try:
-            line = input(f"[{mode}]> ").strip()
+            line = input(f"[{mode}|{quality}]> ").strip()
         except (EOFError, KeyboardInterrupt):
             print()
             break
@@ -495,6 +509,14 @@ def main() -> None:
             mode = new_mode
             print(f"mode = {mode}")
             continue
+        if lower.startswith("quality "):
+            new_q = get_quality(line.split(None, 1)[1].strip())
+            quality = new_q["id"]
+            print(
+                f"quality = {new_q['label']} "
+                f"({new_q['shape_steps']} steps / octree {new_q['octree']})"
+            )
+            continue
 
         try:
             stem = _stamp()
@@ -513,6 +535,7 @@ def main() -> None:
                     stem,
                     prior_mesh=last_mesh if mode == "texture" else None,
                     viewer=viewer,
+                    quality=quality,
                 )
             else:
                 prompt = line
@@ -530,6 +553,7 @@ def main() -> None:
                     stem,
                     prior_mesh=last_mesh if mode == "texture" else None,
                     viewer=viewer,
+                    quality=quality,
                 )
         except Exception as exc:
             print(f"[error] {exc}")
