@@ -23,3 +23,13 @@ Thumbs.db
 *.pth
 *.glb
 *.mp4
+
+# justsay local uploads / project shots (keep examples)
+**/uploads/
+justsay/shots.json
+justsay/workflows/*.json
+!justsay/workflows/.gitkeep
+justsay
+third_party
+.taste-skill
+.impeccable

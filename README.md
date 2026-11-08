@@ -2,9 +2,9 @@
 
 Note: Optimizations are on the way.....
 
-Local, open-source **image → 3D**, **image generation / editing**, and **video generation** — without ComfyUI, without Ollama, without cloud APIs.
+Local, open-source **image → 3D**, **image generation / editing**, and **video generation** — mostly without ComfyUI, without Ollama, without cloud APIs.
 
-Three small apps share the same idea: a Windows-friendly setup script, a Python pipeline, and a lightweight FastAPI chat UI. Models download from Hugging Face with **strict allow/ignore lists** so you do not pull duplicate multi-gigabyte junk.
+Small apps share the same idea: a Windows-friendly setup, a Python pipeline, and a lightweight FastAPI UI. Models download from Hugging Face with **strict allow/ignore lists** so you do not pull duplicate multi-gigabyte junk. **justsay** is the exception that drives an external ComfyUI Wan I2V workflow overnight.
 
 | Folder | What it does | Default UI | Tuned for |
 |--------|--------------|------------|-----------|
@@ -12,6 +12,7 @@ Three small apps share the same idea: a Windows-friendly setup script, a Python 
 | [`justimagine/`](justimagine/) | Text → image, and **contextual image editing** | http://127.0.0.1:7861 | Same 16GB card, full GPU residency |
 | [`justdream/`](justdream/) | Text → **video + audio** (short clips) | http://127.0.0.1:7862 | Same card via **CPU offload**; **bnb-nf4** (Nunchaku is Linux-only) |
 | [`justmotion/`](justmotion/) | Prompt / image / video → **keyframes → interpolate → DLSS/NR video** | http://127.0.0.1:7863 | justimagine UI + FLUX keyframes + exp_dlss upscale |
+| [`justsay/`](justsay/) | Shot list → **ComfyUI Wan I2V** → chained clips → validated join | http://127.0.0.1:7864 | External ComfyUI + ffmpeg normalize/concat |
 
 
 ```
@@ -21,7 +22,8 @@ OpenReality/
 ├── justthink/         ← 3D (Hunyuan3D-2.0)
 ├── justimagine/       ← images (FLUX.2 klein 4B)
 ├── justdream/         ← video (LTX-2.3 Distilled bnb-nf4, Windows)
-└── justmotion/        ← image+motion → DLSS video (UI + exp_dlss stages)
+├── justmotion/        ← image+motion → DLSS video (UI + exp_dlss stages)
+└── justsay/           ← ComfyUI Wan I2V overnight shots + join validation
 ```
 
 ## Why this exists
@@ -81,6 +83,12 @@ cd ..\justmotion
 $env:EXP_DLSS_ROOT = "D:\Workspace\Devoids\FULLONVIDEOEDITING\the-exp-dlss"
 python webui.py
 # → http://127.0.0.1:7863
+
+# ComfyUI overnight shots (start ComfyUI first)
+cd ..\justsay
+python -m pip install -r requirements.txt
+python webui.py
+# → http://127.0.0.1:7864
 ```
 
 Model weights land in the Hugging Face hub cache (`~/.cache/huggingface/...`), not in this git repo. **Do not commit `venv/`, `outputs/`, or weight files** — see `.gitignore`.
@@ -89,7 +97,7 @@ Model weights land in the Hugging Face hub cache (`~/.cache/huggingface/...`), n
 
 1. **Separate process for generation** so `/api/status` stays responsive while CUDA work runs (GIL / long loads do not freeze the UI).
 2. **Chat-style UI** — keep typing / queue prompts; see live status and results.
-3. **Ports differ** so you can run them at once: `7860` / `7861` / `7862` / `7863` (justmotion).
+3. **Ports differ** so you can run them at once: `7860` / `7861` / `7862` / `7863` / `7864` (justsay).
 4. **Licenses follow upstream models** (Apache 2.0 for FLUX.2 klein 4B; LTX and Hunyuan have their own terms — read each model card before commercial use). justmotion’s NR path uses community `video2dlssnr` (not NVIDIA Frame Generation).
 
 

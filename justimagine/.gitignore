@@ -18,6 +18,9 @@ build/
 !.env.example
 .model_ready
 env.ps1
+*.db
+*.db-wal
+*.db-shm
 
 # Runtime outputs (keep folder via .gitkeep if present)
 outputs/*
