@@ -17,6 +17,8 @@ build/
 .env.*
 !.env.example
 .model_ready
+.model_ready_qwen
+models/
 env.ps1
 *.db
 *.db-wal

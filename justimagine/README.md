@@ -1,8 +1,8 @@
 # justimagine
 
-**Text → image** and **contextual image editing** with **FLUX.2 [klein] 4B** (bf16) via Diffusers.
+**Text → image** and **contextual image editing** with **FLUX.2 [klein] 4B** (bf16) and **Qwen-Image-2.1-Turbo** (torchao int8) via Diffusers.
 
-No ComfyUI. No Ollama. One unified model for generate + multi-reference-style edit (`image=` conditioning).
+No ComfyUI. No Ollama. Pick the default model in the sidebar. Generate + multi-reference-style edit (`image=` conditioning).
 
 UI: http://127.0.0.1:7861 after `python webui.py`, or double-click `justimagine.bat` (also on the Desktop).
 
@@ -33,14 +33,15 @@ Target box: **RTX 5060 Ti 16GB Blackwell** + PyTorch **cu128**.
 
 ## Minimal download (important)
 
-The Hub repo also contains a single-file `flux-2-klein-4b.safetensors` (~7.7GB) that **duplicates** the Diffusers shards, plus teaser JPGs.
+[`download_models.py`](download_models.py) supports `--model flux-klein|qwen-turbo|all`.
 
-[`download_models.py`](download_models.py) only pulls:
+**FLUX.2 klein** — skips the duplicate single-file weight (~7.7GB) and teasers. Typical fetch **~15GB**.
 
-- `model_index.json`
-- `transformer/`, `text_encoder/`, `tokenizer/`, `vae/`, `scheduler/`
+**Qwen Image 2.1 Turbo** — Diffusers-native **torchao int8** (`addlabsviral/Qwen-Image-2.1-Turbo-diffuser-8bit`), ~**16.6GB**, stored under `models/qwen-turbo/`. Same staged DiT residency as FLUX (text encoder visits GPU only for the prompt). Qwen Research License = non-commercial.
 
-Typical fetch: **~15GB**, not ~23GB. Setup prints the plan before downloading (`--yes` in automated setup).
+```powershell
+python download_models.py --model qwen-turbo --yes
+```
 
 ## Setup (Windows)
 
@@ -62,13 +63,12 @@ CLI: `python app.py "a red bicycle" --image optional.png`
 - `device_mode` in `/api/status` shows `full` or `staged`.
 - API tab + `GET /api/docs` cover generate, multi-ref, chats, and presets.
 
-## Other models you might choose instead
+## Models in the sidebar
 
-| Model | When |
-|-------|------|
-| FLUX.2 klein **9B** | Higher quality; needs more VRAM / offload |
-| FLUX.1 / SDXL / SD3 | Different ecosystems; swap pipeline class in `app.py` |
-| FP8 / NVFP4 klein builds | If you want smaller residency on Blackwell |
+| Model | Color | Notes |
+|-------|-------|-------|
+| FLUX.2 klein 4B | Blue | Default · Apache 2.0 · ~4 steps distilled |
+| Qwen Image 2.1 Turbo int8 | Teal | 8-step schedule · non-commercial license · swap unloads the other model |
 
 ## Layout
 

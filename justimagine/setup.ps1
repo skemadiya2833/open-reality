@@ -66,11 +66,11 @@ Write-Host "==> Verifying CUDA..."
 Assert-LastExitCode "CUDA verify"
 
 Write-Host "==> Installing Diffusers (git) + app deps..."
-& $VenvPython -m pip install -U "git+https://github.com/huggingface/diffusers.git" transformers accelerate safetensors sentencepiece protobuf pillow numpy fastapi uvicorn python-multipart huggingface_hub
+& $VenvPython -m pip install -U "git+https://github.com/huggingface/diffusers.git" "transformers>=5.17" accelerate safetensors sentencepiece protobuf pillow numpy fastapi uvicorn python-multipart huggingface_hub torchao
 Assert-LastExitCode "deps"
 
-Write-Host "==> Downloading FLUX.2 klein 4B (minimal files)..."
-& $VenvPython download_models.py --yes
+Write-Host "==> Downloading models (FLUX.2 klein + Qwen Turbo int8)..."
+& $VenvPython download_models.py --model all --yes
 Assert-LastExitCode "model download"
 
 New-Item -ItemType Directory -Force -Path "outputs","static" | Out-Null

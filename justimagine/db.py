@@ -284,3 +284,17 @@ def touch_chat(chat_id: str) -> None:
             (time.time(), chat_id),
         )
         conn.commit()
+
+
+def get_setting(key: str, default: str | None = None) -> str | None:
+    with _lock:
+        conn = _connect()
+        value = _get_meta(conn, key)
+    return value if value is not None else default
+
+
+def set_setting(key: str, value: str) -> None:
+    with _lock:
+        conn = _connect()
+        _set_meta(conn, key, value)
+        conn.commit()

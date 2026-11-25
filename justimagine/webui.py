@@ -1,5 +1,5 @@
 """
-justimagine web UI — contextual FLUX.2 klein chat.
+justimagine web UI — multi-model image chat (FLUX.2 klein + Qwen Turbo).
 Run: python webui.py → http://127.0.0.1:7861
 """
 
@@ -56,6 +56,8 @@ _state = {
     "load_s": None,
     "took_history": [],
     "chat_id": None,
+    "default_model": "flux-klein",
+    "active_model": "flux-klein",
 }
 _job_queue: deque = deque()
 _mp_ctx = mp.get_context("spawn")
@@ -66,12 +68,21 @@ _dispatcher_wake = threading.Event()
 _started = False
 
 
-def _worker_main(job_q: mp.Queue, event_q: mp.Queue) -> None:
+def _worker_main(job_q: mp.Queue, event_q: mp.Queue, boot_model: str = "flux-klein") -> None:
     import io as bio
 
     from PIL import Image
 
-    from app import FluxKlein, OUTPUT_DIR as OUT, _stamp, format_duration, save_image
+    from app import (
+        DEFAULT_MODEL,
+        MODELS,
+        OUTPUT_DIR as OUT,
+        _stamp,
+        create_engine,
+        format_duration,
+        free_vram,
+        save_image,
+    )
 
     def emit(**payload) -> None:
         try:
@@ -85,8 +96,25 @@ def _worker_main(job_q: mp.Queue, event_q: mp.Queue) -> None:
             payload["progress"] = progress
         emit(**payload)
 
-    engine = FluxKlein()
+    active_model = boot_model if boot_model in MODELS else DEFAULT_MODEL
+    engine = create_engine(active_model)
     last_image: Image.Image | None = None
+
+    def _ensure_engine(model_id: str, *, reason: str = "switch") -> None:
+        nonlocal engine, active_model
+        mid = model_id if model_id in MODELS else DEFAULT_MODEL
+        if engine is not None and getattr(engine, "model_id", None) == mid and engine.pipe is not None:
+            return
+        label = MODELS.get(mid, {}).get("label", mid)
+        if engine is not None and engine.pipe is not None:
+            on_status(f"unloading {MODELS.get(active_model, {}).get('label', active_model)}…", 0.02)
+            engine.unload()
+            free_vram()
+        on_status(f"{reason}: loading {label}…", 0.04)
+        engine = create_engine(mid)
+        engine.load(on_status=on_status)
+        active_model = mid
+
     try:
         def _boot_status(msg: str, progress: float | None = None) -> None:
             payload = {"type": "progress", "status": f"startup: {msg}"}
@@ -94,7 +122,8 @@ def _worker_main(job_q: mp.Queue, event_q: mp.Queue) -> None:
                 payload["progress"] = progress
             emit(**payload)
 
-        emit(type="progress", status="preloading FLUX.2 klein onto GPU…", progress=0.0)
+        label = MODELS.get(active_model, {}).get("label", active_model)
+        emit(type="progress", status=f"preloading {label} onto GPU…", progress=0.0)
         engine.load(on_status=_boot_status)
         emit(
             type="progress",
@@ -114,6 +143,7 @@ def _worker_main(job_q: mp.Queue, event_q: mp.Queue) -> None:
         compiled=bool(engine._compiled),
         quant=getattr(engine, "quant", "bf16"),
         load_s=engine.load_s,
+        model_id=active_model,
     )
 
     while True:
@@ -141,6 +171,38 @@ def _worker_main(job_q: mp.Queue, event_q: mp.Queue) -> None:
                 last_image = None
                 emit(type="context", context=None, has_context=False)
             continue
+        if kind == "switch_model":
+            mid = job.get("model_id") or DEFAULT_MODEL
+            try:
+                _ensure_engine(mid, reason="switch")
+                emit(
+                    type="model",
+                    model_id=active_model,
+                    device_mode=engine.device_mode,
+                    compiled=bool(engine._compiled),
+                    quant=getattr(engine, "quant", "bf16"),
+                    load_s=engine.load_s,
+                )
+                emit(
+                    type="progress",
+                    status=(
+                        f"idle · {MODELS.get(active_model, {}).get('label', active_model)} ready "
+                        f"({engine.device_mode})"
+                    ),
+                    progress=None,
+                )
+            except Exception as exc:
+                emit(
+                    type="model",
+                    model_id=active_model,
+                    device_mode=getattr(engine, "device_mode", None),
+                    compiled=bool(getattr(engine, "_compiled", False)),
+                    quant=getattr(engine, "quant", "bf16"),
+                    load_s=getattr(engine, "load_s", None),
+                )
+                emit(type="progress", status=f"model switch failed: {exc}", progress=None)
+                print(f"[worker] switch_model failed: {exc}")
+            continue
 
         job_id = job["id"]
         prompt = (job.get("prompt") or "").strip()
@@ -154,10 +216,13 @@ def _worker_main(job_q: mp.Queue, event_q: mp.Queue) -> None:
         seed = job.get("seed")
         steps = int(job.get("steps") or 4)
         guidance = float(job.get("guidance") if job.get("guidance") is not None else 1.0)
+        model_id = job.get("model_id") or active_model
 
         emit(type="job_start", job_id=job_id, status="starting…", progress=0.0)
         t0 = time.time()
         try:
+            _ensure_engine(model_id, reason="generate")
+
             if clear_first:
                 last_image = None
 
@@ -208,6 +273,7 @@ def _worker_main(job_q: mp.Queue, event_q: mp.Queue) -> None:
                 device_mode=engine.device_mode,
                 compiled=bool(engine._compiled),
                 quant=getattr(engine, "quant", "bf16"),
+                model_id=active_model,
                 took_s=infer if infer is not None else took,
                 timing=timing,
                 edited=bool(refs),
@@ -237,9 +303,14 @@ def _snapshot() -> dict:
         eta_left_s = None
         eta_mid = _state.get("eta_mid_s")
         if _state["busy"] and isinstance(eta_mid, (int, float)) and isinstance(progress, (int, float)):
-            remain = max(0.0, float(eta_mid) * (1.0 - float(progress)))
-            eta_left_s = remain
-            eta_left = format_duration(remain)
+            # Near the end the wall clock is usually VAE decode, not denoise ETA.
+            if float(progress) >= 0.90 or "decod" in str(_state.get("status") or "").lower():
+                eta_left_s = None
+                eta_left = None
+            else:
+                remain = max(0.0, float(eta_mid) * (1.0 - float(progress)))
+                eta_left_s = remain
+                eta_left = format_duration(remain)
         last_took_s = _state.get("last_took_s")
         last_took = format_duration(last_took_s) if isinstance(last_took_s, (int, float)) else None
         avg_took_s = _state.get("avg_took_s")
@@ -282,6 +353,8 @@ def _snapshot() -> dict:
             "device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
             "chat_id": _state.get("chat_id"),
             "chat_count": chat_db.chat_count(),
+            "default_model": _state.get("default_model") or "flux-klein",
+            "active_model": _state.get("active_model") or _state.get("default_model") or "flux-klein",
             "base_url": f"http://127.0.0.1:{PORT}",
             "defaults": {
                 "width": 1024,
@@ -349,6 +422,7 @@ def _event_listener() -> None:
             break
         et = ev.get("type")
         if et == "ready":
+            mid = ev.get("model_id") or _state.get("active_model")
             _set(
                 worker_ready=True,
                 status="idle",
@@ -356,11 +430,25 @@ def _event_listener() -> None:
                 compiled=bool(ev.get("compiled")),
                 quant=ev.get("quant") or _state.get("quant") or "bf16",
                 load_s=ev.get("load_s"),
+                active_model=mid,
             )
             with _state_lock:
                 ctx = _state.get("context") if _state.get("has_context") else None
             if ctx:
                 _queue_set_context(ctx)
+        elif et == "model":
+            _set(
+                active_model=ev.get("model_id") or _state.get("active_model"),
+                device_mode=ev.get("device_mode") or _state.get("device_mode"),
+                compiled=bool(ev.get("compiled", _state.get("compiled"))),
+                quant=ev.get("quant") or _state.get("quant") or "bf16",
+                load_s=ev.get("load_s", _state.get("load_s")),
+                busy=False,
+                job_id=None,
+                stage_started=None,
+                progress=None,
+            )
+            _dispatcher_wake.set()
         elif et == "progress":
             payload = {"status": ev.get("status", "working")}
             if "progress" in ev and ev["progress"] is not None:
@@ -404,6 +492,8 @@ def _event_listener() -> None:
                     "took_label": took_label or ev.get("label"),
                     "edited": bool(ev.get("edited")),
                     "device_mode": ev.get("device_mode"),
+                    "model": ev.get("model_id") or timing.get("model"),
+                    "quant": ev.get("quant") or timing.get("quant"),
                     "width": timing.get("width"),
                     "height": timing.get("height"),
                     "steps": timing.get("steps"),
@@ -430,6 +520,7 @@ def _event_listener() -> None:
                 device_mode=ev.get("device_mode"),
                 compiled=bool(ev.get("compiled", _state.get("compiled"))),
                 quant=ev.get("quant") or _state.get("quant") or "bf16",
+                active_model=ev.get("model_id") or _state.get("active_model"),
                 job_id=None,
                 error=None,
                 stage_started=None,
@@ -495,7 +586,21 @@ def _dispatcher_loop() -> None:
             _dispatcher_wake.wait(timeout=0.5)
             _dispatcher_wake.clear()
             continue
-        if job.get("kind") not in ("clear_context", "set_context"):
+        kind = job.get("kind")
+        if kind == "switch_model":
+            from app import get_model_cfg
+
+            mid = job.get("model_id") or "flux-klein"
+            _set(
+                busy=True,
+                job_id=None,
+                status=f"switching to {get_model_cfg(mid)['label']}…",
+                progress=0.02,
+                error=None,
+                stage_started=time.time(),
+                eta_mid_s=None,
+            )
+        elif kind not in ("clear_context", "set_context"):
             _set(
                 busy=True,
                 job_id=job.get("id"),
@@ -509,7 +614,11 @@ def _dispatcher_loop() -> None:
 
 
 def _boot_chat_state() -> None:
+    from app import DEFAULT_MODEL, MODELS
+
     chat_db.init_db()
+    saved = chat_db.get_setting("default_model", DEFAULT_MODEL) or DEFAULT_MODEL
+    default_model = saved if saved in MODELS else DEFAULT_MODEL
     chat = chat_db.ensure_active_chat()
     msgs = chat_db.load_messages(chat["id"])
     preview = None
@@ -525,6 +634,8 @@ def _boot_chat_state() -> None:
         _state["preview"] = preview
         _state["context"] = context if has_context else None
         _state["has_context"] = has_context
+        _state["default_model"] = default_model
+        _state["active_model"] = default_model
 
 
 def _start_runtime() -> None:
@@ -533,9 +644,15 @@ def _start_runtime() -> None:
         return
     _started = True
     _boot_chat_state()
+    boot_model = _state.get("default_model") or "flux-klein"
     _job_q = _mp_ctx.Queue()
     _event_q = _mp_ctx.Queue()
-    _worker_proc = _mp_ctx.Process(target=_worker_main, args=(_job_q, _event_q), name="imagine-worker", daemon=True)
+    _worker_proc = _mp_ctx.Process(
+        target=_worker_main,
+        args=(_job_q, _event_q, boot_model),
+        name="imagine-worker",
+        daemon=True,
+    )
     _worker_proc.start()
     threading.Thread(target=_event_listener, name="imagine-events", daemon=True).start()
     threading.Thread(target=_dispatcher_loop, name="imagine-dispatch", daemon=True).start()
@@ -688,6 +805,57 @@ async def new_chat():
     }
 
 
+@app.get("/api/models")
+async def models_list():
+    from app import list_models
+
+    active = _state.get("active_model") or _state.get("default_model")
+    default = _state.get("default_model") or active
+    return {
+        "ok": True,
+        "default_model": default,
+        "active_model": active,
+        "models": list_models(active),
+    }
+
+
+@app.post("/api/models/default")
+async def set_default_model(model: str = Form(...)):
+    from app import MODELS, get_model_cfg, list_models, model_ready
+
+    mid = (model or "").strip()
+    if mid not in MODELS:
+        return JSONResponse({"ok": False, "error": f"unknown model: {mid}"}, status_code=400)
+    if not model_ready(mid):
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": f"{get_model_cfg(mid)['label']} is not downloaded yet. "
+                f"Run: python download_models.py --model {mid} --yes",
+            },
+            status_code=400,
+        )
+
+    chat_db.set_setting("default_model", mid)
+    with _state_lock:
+        _state["default_model"] = mid
+        busy = bool(_state.get("busy"))
+
+    if not busy:
+        with _queue_lock:
+            _job_queue.append({"kind": "switch_model", "model_id": mid})
+            _set(queue_len=len(_job_queue), status=f"switching to {get_model_cfg(mid)['label']}…")
+        _dispatcher_wake.set()
+
+    return {
+        "ok": True,
+        "default_model": mid,
+        "active_model": _state.get("active_model"),
+        "switching": not busy,
+        "models": list_models(mid),
+    }
+
+
 @app.post("/api/estimate")
 async def estimate(
     width: int = Form(1024),
@@ -753,11 +921,12 @@ async def generate(
     seed: str = Form(""),
     steps: int = Form(4),
     guidance: float = Form(1.0),
+    model: str = Form(""),
 ):
     if not torch.cuda.is_available():
         return JSONResponse({"ok": False, "error": "CUDA not available"}, status_code=500)
 
-    from app import estimate_wall_clock_s, format_duration
+    from app import MODELS, estimate_wall_clock_s, format_duration, model_ready
 
     prompt = (prompt or "").strip()
     uploads: list[UploadFile] = []
@@ -777,6 +946,15 @@ async def generate(
     if not prompt:
         return JSONResponse({"ok": False, "error": "prompt required"}, status_code=400)
 
+    model_id = (model or "").strip() or _state.get("default_model") or "flux-klein"
+    if model_id not in MODELS:
+        model_id = "flux-klein"
+    if not model_ready(model_id):
+        return JSONResponse(
+            {"ok": False, "error": f"model '{model_id}' is not downloaded"},
+            status_code=400,
+        )
+
     if not _state.get("chat_id"):
         chat = chat_db.ensure_active_chat()
         _apply_chat_to_state(chat, chat_db.load_messages(chat["id"]))
@@ -787,7 +965,11 @@ async def generate(
     steps = max(1, min(50, int(steps)))
     guidance = float(guidance)
     has_ref = bool(filenames) or (not do_clear and _state.get("has_context"))
-    warm = (_state.get("device_mode") in ("full", "staged")) and bool(_state.get("worker_ready"))
+    warm = (
+        (_state.get("device_mode") in ("full", "staged"))
+        and bool(_state.get("worker_ready"))
+        and (_state.get("active_model") == model_id)
+    )
     wall = estimate_wall_clock_s(
         width=width,
         height=height,
@@ -796,7 +978,7 @@ async def generate(
         warm=warm,
         compiled=bool(_state.get("compiled")),
         quant=_state.get("quant") or "bf16",
-        avg_took_s=_state.get("avg_took_s"),
+        avg_took_s=_state.get("avg_took_s") if warm else None,
     )
 
     attach_previews: list[str] = []
@@ -827,6 +1009,7 @@ async def generate(
             "steps": steps,
             "guidance": guidance,
             "seed": seed_val,
+            "model": model_id,
             "eta_mid_s": wall["total_mid_s"],
             "eta_label": format_duration(wall["total_mid_s"]),
             "ts": time.time(),
@@ -846,6 +1029,7 @@ async def generate(
                 "seed": seed_val,
                 "steps": steps,
                 "guidance": guidance,
+                "model_id": model_id,
                 "eta_mid_s": wall["total_mid_s"],
             }
         )
@@ -856,6 +1040,7 @@ async def generate(
         "ok": True,
         "job_id": job_id,
         "queue_len": qlen,
+        "model": model_id,
         "eta_mid_s": wall["total_mid_s"],
         "eta_lo_s": wall["total_lo_s"],
         "eta_hi_s": wall["total_hi_s"],
@@ -872,7 +1057,7 @@ async def api_docs():
     return {
         "title": "justimagine HTTP API",
         "base_url": base,
-        "model": "FLUX.2 klein 4B (bf16, resident DiT)",
+        "model": "FLUX.2 klein 4B (bf16) or Qwen Image 2.1 Turbo (int8) — pick via /api/models",
         "async": True,
         "persistence": "SQLite justimagine.db — chats + messages survive restarts",
         "note": (

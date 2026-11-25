@@ -116,6 +116,53 @@
     .chat-list-empty {
       padding: 0.6rem 0.75rem; font-size: 0.8rem; color: var(--faint);
     }
+    .model-pick {
+      margin: 0.35rem 0 0.15rem;
+      padding: 0 0.15rem;
+    }
+    .model-pick-label {
+      font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em;
+      text-transform: uppercase; color: var(--faint);
+      padding: 0.15rem 0.5rem 0.35rem;
+    }
+    .model-trigger {
+      display: flex; align-items: center; gap: 0.55rem;
+      width: 100%; text-align: left;
+      padding: 0.65rem 0.75rem; border-radius: 12px;
+      background: var(--surface); border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+      font-weight: 560; font-size: 0.88rem;
+    }
+    .model-trigger:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+    .model-trigger .chev { margin-left: auto; color: var(--faint); font-size: 0.75rem; }
+    .model-dot {
+      width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--dot, #1a73e8) 22%, white);
+    }
+    .model-pop {
+      display: none; margin-top: 0.35rem;
+      background: var(--surface); border: 1px solid var(--line);
+      border-radius: 12px; box-shadow: var(--shadow);
+      padding: 0.35rem; overflow: hidden;
+    }
+    .model-pop.open { display: grid; gap: 0.15rem; }
+    .model-option {
+      display: grid; grid-template-columns: 12px 1fr auto; gap: 0.55rem; align-items: center;
+      width: 100%; text-align: left;
+      padding: 0.6rem 0.65rem; border-radius: 10px;
+      font-size: 0.86rem;
+    }
+    .model-option:hover { background: color-mix(in srgb, var(--bg) 70%, white); }
+    .model-option.active { background: var(--accent-soft); font-weight: 600; }
+    .model-option:disabled { opacity: 0.45; cursor: not-allowed; }
+    .model-option .meta {
+      font-size: 0.7rem; color: var(--faint); font-weight: 500;
+    }
+    .model-option .sub {
+      grid-column: 2 / -1; font-size: 0.72rem; color: var(--faint);
+      margin-top: -0.15rem;
+    }
+
     .side-foot {
       margin-top: 0; padding: 0.75rem 0.65rem 0.4rem;
       border-top: 1px solid var(--line);
@@ -140,12 +187,14 @@
       border-bottom: 1px solid transparent;
     }
     .model-chip {
-      display: inline-flex; align-items: center; gap: 0.4rem;
-      padding: 0.4rem 0.75rem; border-radius: 999px;
+      display: inline-flex; align-items: center; gap: 0.45rem;
+      padding: 0.4rem 0.75rem 0.4rem 0.55rem; border-radius: 999px;
       background: var(--surface); border: 1px solid var(--line);
       font-size: 0.88rem; font-weight: 600; color: var(--ink);
+      box-shadow: inset 3px 0 0 var(--chip, #1a73e8);
     }
     .model-chip span { color: var(--muted); font-weight: 500; }
+    .model-chip .model-dot { width: 8px; height: 8px; }
     .status-live {
       font-size: 0.82rem; color: var(--muted);
       font-variant-numeric: tabular-nums;
@@ -190,32 +239,21 @@
     }
 
     .msg {
-      display: grid; grid-template-columns: 36px 1fr; gap: 0.75rem;
-      align-items: start;
+      display: flex; flex-direction: column; gap: 0.35rem;
+      width: 100%;
       animation: rise 0.28s ease-out;
     }
+    .msg.user { align-items: flex-end; }
+    .msg.assistant { align-items: flex-start; }
     @keyframes rise {
       from { opacity: 0; transform: translateY(6px); }
       to { opacity: 1; transform: none; }
     }
-    .avatar {
-      width: 36px; height: 36px; border-radius: 50%;
-      display: grid; place-items: center;
-      font-size: 0.78rem; font-weight: 700; letter-spacing: -0.02em;
-      flex-shrink: 0;
-    }
-    .msg.user .avatar { background: var(--user); color: var(--ink); }
-    .msg.assistant .avatar {
-      background: conic-gradient(from 210deg, #1a73e8, #34a853, #fbbc04, #ea4335, #1a73e8);
-      color: transparent;
-      position: relative;
-    }
-    .msg.assistant .avatar::after {
-      content: ""; position: absolute; inset: 4px; border-radius: 50%; background: var(--bg);
-    }
-    .bubble-wrap { min-width: 0; padding-top: 0.35rem; }
+    .bubble-wrap { min-width: 0; max-width: 92%; }
+    .msg.user .bubble-wrap { display: flex; flex-direction: column; align-items: flex-end; }
+    .msg.assistant .bubble-wrap { display: flex; flex-direction: column; align-items: flex-start; }
     .bubble-wrap .who {
-      font-size: 0.78rem; font-weight: 600; margin-bottom: 0.35rem; color: var(--ink);
+      font-size: 0.72rem; font-weight: 600; margin-bottom: 0.25rem; color: var(--faint);
     }
     .bubble {
       font-size: 1rem; line-height: 1.55; white-space: pre-wrap; word-break: break-word;
@@ -224,6 +262,7 @@
     .msg.user .bubble {
       display: inline-block; max-width: 100%;
       background: var(--user); padding: 0.75rem 1rem; border-radius: 18px 18px 6px 18px;
+      text-align: left;
     }
     .msg.assistant.err .bubble { color: var(--danger); }
     .detail-block {
@@ -236,6 +275,7 @@
       background: var(--surface);
       overflow: hidden;
       vertical-align: top;
+      align-self: flex-start;
     }
     .detail-block summary {
       list-style: none; cursor: pointer;
@@ -266,9 +306,10 @@
     }
     .detail-block .detail-grid strong { color: var(--ink); font-weight: 500; }
     .result-card {
-      margin-top: 0.75rem; border-radius: 16px; overflow: hidden;
+      margin-top: 0.55rem; border-radius: 16px; overflow: hidden;
       background: var(--surface); border: 1px solid var(--line);
-      max-width: 100%;
+      max-width: min(100%, 520px);
+      align-self: flex-start;
     }
     .result-card img {
       display: block; width: 100%; height: auto; max-height: 520px; object-fit: contain;
@@ -288,10 +329,11 @@
     .result-card .actions a:hover, .ghost-btn:hover { color: var(--ink); }
 
     .gen-placeholder {
-      margin-top: 0.75rem;
+      margin-top: 0.55rem;
       width: 100%;
       aspect-ratio: 1 / 1;
       max-width: 420px;
+      align-self: flex-start;
       border-radius: 16px;
       background: #0f1114;
       border: 1px solid #1c1f24;
@@ -338,6 +380,11 @@
       padding: 0.35rem 1.25rem 1.15rem;
       background: linear-gradient(to top, var(--bg) 70%, transparent);
     }
+    .composer.drag-over {
+      outline: 2px solid color-mix(in srgb, var(--accent) 55%, var(--line));
+      outline-offset: 2px;
+      background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface));
+    }
     .composer {
       max-width: var(--chat-max); margin: 0 auto;
       background: var(--surface);
@@ -382,8 +429,10 @@
       margin-top: 0.35rem; font-size: 0.72rem; color: var(--faint);
     }
     .msg-attach-row {
-      display: flex; flex-wrap: wrap; gap: 0.45rem; margin-bottom: 0.55rem;
+      display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.55rem;
+      justify-content: flex-end;
     }
+    .msg.assistant .msg-attach-row { justify-content: flex-start; }
     .msg-attach {
       width: 88px; height: 88px;
       border-radius: 12px; overflow: hidden;
@@ -569,6 +618,15 @@
     <button type="button" class="nav-btn" id="navApi">
       <span class="ico">{ }</span> API
     </button>
+    <div class="model-pick" id="modelPick">
+      <div class="model-pick-label">Default model</div>
+      <button type="button" class="model-trigger" id="modelBtn" aria-haspopup="listbox" aria-expanded="false">
+        <span class="model-dot" id="modelBtnDot" style="--dot:#1a73e8;background:#1a73e8"></span>
+        <span id="modelBtnLabel">FLUX.2 klein</span>
+        <span class="chev" aria-hidden="true">▾</span>
+      </button>
+      <div class="model-pop" id="modelPop" role="listbox" aria-label="Image model"></div>
+    </div>
     <div class="chat-list-wrap">
       <div class="chat-list-label">Chats <span id="chatCount">0</span></div>
       <div class="chat-list" id="chatList" aria-label="Chat history"></div>
@@ -582,7 +640,11 @@
 
   <div class="main">
     <header class="topbar">
-      <div class="model-chip">FLUX.2 klein <span>4B</span></div>
+      <div class="model-chip" id="modelChip" style="--chip:#1a73e8">
+        <span class="model-dot" id="modelChipDot" style="--dot:#1a73e8;background:#1a73e8"></span>
+        <span id="modelChipLabel">FLUX.2 klein</span>
+        <span id="modelChipShort">4B</span>
+      </div>
       <div class="status-live" id="statusLive">Ready</div>
     </header>
 
@@ -930,7 +992,7 @@
     function ensureLoadingCard(data) {
       const busy = !!data.busy;
       const jobId = data.job_id;
-      if (!busy) {
+      if (!busy || !jobId) {
         if (loadingEl) {
           loadingEl.remove();
           loadingEl = null;
@@ -944,26 +1006,30 @@
         loadingEl.className = "msg assistant";
         loadingEl.id = "loadingMsg";
         loadingEl.innerHTML =
-          '<div class="avatar"></div>' +
           '<div class="bubble-wrap">' +
           '<div class="who">justimagine</div>' +
           '<div class="gen-placeholder"><div class="ring"></div><div class="cap" id="loadingCap">Generating…</div></div>' +
           "</div>";
-        const ph = loadingEl.querySelector(".gen-placeholder");
-        applyPlaceholderAspect(ph, loadingSize.w, loadingSize.h);
-        threadInner.appendChild(loadingEl);
-        thread.scrollTop = thread.scrollHeight;
-      } else {
-        const ph = loadingEl.querySelector(".gen-placeholder");
-        applyPlaceholderAspect(ph, loadingSize.w, loadingSize.h);
       }
+      const ph = loadingEl.querySelector(".gen-placeholder");
+      applyPlaceholderAspect(ph, loadingSize.w, loadingSize.h);
+      // Always sit after the latest chat messages (below the user prompt).
+      threadInner.appendChild(loadingEl);
+      thread.scrollTop = thread.scrollHeight;
       loadingJobId = jobId;
       const cap = document.getElementById("loadingCap");
       if (cap) {
+        const status = String(data.status || "");
+        const decoding = /decod/i.test(status) || (typeof data.progress_pct === "number" && data.progress_pct >= 92);
         const bits = [];
-        if (typeof data.progress_pct === "number") bits.push(data.progress_pct + "%");
-        if (data.eta_left) bits.push("~" + data.eta_left + " left");
-        else if (data.elapsed_s) bits.push(data.elapsed_s + "s");
+        if (decoding) {
+          bits.push("Decoding…");
+          if (data.elapsed_s) bits.push(data.elapsed_s + "s");
+        } else {
+          if (typeof data.progress_pct === "number") bits.push(data.progress_pct + "%");
+          if (data.eta_left) bits.push("~" + data.eta_left + " left");
+          else if (data.elapsed_s) bits.push(data.elapsed_s + "s");
+        }
         cap.textContent = bits.length ? bits.join(" · ") : "Generating…";
       }
     }
@@ -1140,6 +1206,120 @@
     let currentAspect = "1:1";
     let currentQuality = "medium";
     let loadingSize = { w: 1024, h: 1024 };
+    let currentModelId = "flux-klein";
+    let modelsCache = [];
+
+    const modelBtn = document.getElementById("modelBtn");
+    const modelPop = document.getElementById("modelPop");
+    const modelBtnLabel = document.getElementById("modelBtnLabel");
+    const modelBtnDot = document.getElementById("modelBtnDot");
+    const modelChip = document.getElementById("modelChip");
+    const modelChipLabel = document.getElementById("modelChipLabel");
+    const modelChipShort = document.getElementById("modelChipShort");
+    const modelChipDot = document.getElementById("modelChipDot");
+
+    function applyModelMeta(m) {
+      if (!m) return;
+      currentModelId = m.id;
+      const color = m.color || "#1a73e8";
+      modelBtnLabel.textContent = m.label;
+      modelBtnDot.style.background = color;
+      modelBtnDot.style.setProperty("--dot", color);
+      modelChipLabel.textContent = m.label;
+      modelChipShort.textContent = m.short || "";
+      modelChip.style.setProperty("--chip", color);
+      modelChipDot.style.background = color;
+      modelChipDot.style.setProperty("--dot", color);
+      if (m.aspects) {
+        ASPECT_ORDER.forEach((key) => {
+          if (m.aspects[key]) ASPECTS[key] = m.aspects[key];
+        });
+      }
+      if (m.qualities) {
+        QUALITY_ORDER.forEach((key) => {
+          if (m.qualities[key]) {
+            QUALITIES[key] = {
+              ...QUALITIES[key],
+              steps: m.qualities[key].steps,
+              guidance: m.qualities[key].guidance,
+              short: m.qualities[key].short || QUALITIES[key].short,
+            };
+          }
+        });
+      }
+      applyAspect(currentAspect);
+      applyQuality(currentQuality);
+    }
+
+    function renderModelPop() {
+      modelPop.innerHTML = "";
+      modelsCache.forEach((m) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "model-option" + (m.id === currentModelId ? " active" : "");
+        btn.role = "option";
+        btn.dataset.model = m.id;
+        btn.disabled = !m.ready;
+        const color = m.color || "#1a73e8";
+        btn.innerHTML =
+          `<span class="model-dot" style="--dot:${color};background:${color}"></span>` +
+          `<span>${m.label}</span>` +
+          `<span class="meta">${m.ready ? (m.short || m.quant || "") : "not downloaded"}</span>` +
+          (m.license_note ? `<span class="sub">${m.license_note}</span>` : "");
+        btn.addEventListener("click", () => selectModel(m.id));
+        modelPop.appendChild(btn);
+      });
+    }
+
+    async function refreshModels() {
+      try {
+        const res = await fetch("/api/models", { cache: "no-store" });
+        const data = await res.json();
+        if (!data.ok) return;
+        modelsCache = data.models || [];
+        const activeId = data.default_model || data.active_model || currentModelId;
+        const m = modelsCache.find((x) => x.id === activeId) || modelsCache[0];
+        if (m) applyModelMeta(m);
+        renderModelPop();
+      } catch (_) {}
+    }
+
+    async function selectModel(modelId) {
+      if (!modelId || modelId === currentModelId) {
+        modelPop.classList.remove("open");
+        modelBtn.setAttribute("aria-expanded", "false");
+        return;
+      }
+      const fd = new FormData();
+      fd.set("model", modelId);
+      const res = await fetch("/api/models/default", { method: "POST", body: fd });
+      const data = await res.json();
+      modelPop.classList.remove("open");
+      modelBtn.setAttribute("aria-expanded", "false");
+      if (!data.ok) {
+        statusLive.textContent = data.error || "Could not switch model";
+        return;
+      }
+      modelsCache = data.models || modelsCache;
+      const m = modelsCache.find((x) => x.id === modelId);
+      if (m) applyModelMeta(m);
+      renderModelPop();
+      statusLive.textContent = data.switching
+        ? "Switching model…"
+        : ("Default model: " + (m ? m.label : modelId));
+      refreshEstimate();
+    }
+
+    modelBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const open = !modelPop.classList.contains("open");
+      closePresetMenus();
+      if (open) {
+        modelPop.classList.add("open");
+        modelBtn.setAttribute("aria-expanded", "true");
+      }
+    });
+    modelPop.addEventListener("click", (e) => e.stopPropagation());
 
     function aspectIconSvg(key, size) {
       const s = size || 18;
@@ -1193,8 +1373,10 @@
     function closePresetMenus() {
       aspectPop.classList.remove("open");
       qualityPop.classList.remove("open");
+      modelPop.classList.remove("open");
       aspectBtn.setAttribute("aria-expanded", "false");
       qualityBtn.setAttribute("aria-expanded", "false");
+      modelBtn.setAttribute("aria-expanded", "false");
       aspectBtn.classList.remove("active");
       qualityBtn.classList.remove("active");
     }
@@ -1333,6 +1515,68 @@
     });
 
     document.getElementById("attachBtn").addEventListener("click", () => imageInput.click());
+
+    function addImageBlob(blob, name) {
+      if (!blob || !String(blob.type || "").startsWith("image/")) return false;
+      const ext = (blob.type.split("/")[1] || "png").replace("jpeg", "jpg");
+      const file = new File([blob], name || ("paste-" + Date.now() + "." + ext), {
+        type: blob.type || "image/png",
+      });
+      addAttachments([file]);
+      return true;
+    }
+
+    promptEl.addEventListener("paste", (e) => {
+      const items = e.clipboardData && e.clipboardData.items;
+      if (!items) return;
+      let added = false;
+      for (const item of items) {
+        if (item.type && item.type.startsWith("image/")) {
+          const blob = item.getAsFile();
+          if (blob && addImageBlob(blob, "clipboard." + (item.type.split("/")[1] || "png"))) {
+            added = true;
+          }
+        }
+      }
+      if (added) e.preventDefault();
+    });
+
+    // Also allow paste when focus is on the composer (not only the textarea).
+    form.addEventListener("paste", (e) => {
+      if (e.target === promptEl) return;
+      const items = e.clipboardData && e.clipboardData.items;
+      if (!items) return;
+      let added = false;
+      for (const item of items) {
+        if (item.type && item.type.startsWith("image/")) {
+          const blob = item.getAsFile();
+          if (blob && addImageBlob(blob, "clipboard." + (item.type.split("/")[1] || "png"))) {
+            added = true;
+          }
+        }
+      }
+      if (added) e.preventDefault();
+    });
+
+    ["dragenter", "dragover"].forEach((evName) => {
+      form.addEventListener(evName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        form.classList.add("drag-over");
+      });
+    });
+    ["dragleave", "drop"].forEach((evName) => {
+      form.addEventListener(evName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (evName === "dragleave" && form.contains(e.relatedTarget)) return;
+        form.classList.remove("drag-over");
+      });
+    });
+    form.addEventListener("drop", (e) => {
+      const files = e.dataTransfer && e.dataTransfer.files;
+      if (files && files.length) addAttachments(files);
+    });
     imageInput.addEventListener("change", () => {
       addAttachments(imageInput.files);
     });
@@ -1392,9 +1636,6 @@
       }
       const row = document.createElement("div");
       row.className = "msg " + (msg.role || "assistant") + (msg.error ? " err" : "");
-      const av = document.createElement("div");
-      av.className = "avatar";
-      if (msg.role === "user") av.textContent = "Y";
       const wrap = document.createElement("div");
       wrap.className = "bubble-wrap";
       const who = document.createElement("div");
@@ -1405,6 +1646,13 @@
         || (msg.attach_url ? [msg.attach_url] : null)
         || (msg.attach_previews || []).map((n) => "/outputs/" + n)
         || [];
+      const clean = cleanLegacyText(msg.text || "", msg.role);
+      if (clean || msg.error) {
+        const bubble = document.createElement("div");
+        bubble.className = "bubble";
+        bubble.textContent = msg.error ? (msg.text || "Something went wrong") : clean;
+        wrap.appendChild(bubble);
+      }
       if (msg.role === "user" && attachUrls.length) {
         const rowAttach = document.createElement("div");
         rowAttach.className = "msg-attach-row";
@@ -1420,13 +1668,6 @@
           rowAttach.appendChild(thumb);
         });
         wrap.appendChild(rowAttach);
-      }
-      const clean = cleanLegacyText(msg.text || "", msg.role);
-      if (clean || msg.error) {
-        const bubble = document.createElement("div");
-        bubble.className = "bubble";
-        bubble.textContent = msg.error ? (msg.text || "Something went wrong") : clean;
-        wrap.appendChild(bubble);
       }
       if (msg.preview) {
         const src = "/outputs/" + msg.preview + "?t=" + Date.now();
@@ -1448,7 +1689,6 @@
       }
       const details = buildDetails(msg);
       if (details) wrap.appendChild(details);
-      row.appendChild(av);
       row.appendChild(wrap);
       threadInner.appendChild(row);
       thread.scrollTop = thread.scrollHeight;
@@ -1456,8 +1696,12 @@
 
     function setProgress(data) {
       const busy = !!data.busy;
+      const status = String(data.status || "");
+      const decoding = /decod/i.test(status) || (typeof data.progress_pct === "number" && data.progress_pct >= 92);
       statusLive.textContent = busy
-        ? (data.eta_left ? "Generating · ~" + data.eta_left + " left" : (data.status || "Generating…"))
+        ? (decoding
+          ? "Decoding image…"
+          : (data.eta_left ? "Generating · ~" + data.eta_left + " left" : (status || "Generating…")))
         : (data.worker_ready ? (data.last_took ? "Ready · last " + data.last_took : "Ready") : "Loading model…");
       statusLive.classList.toggle("busy", busy);
       ensureLoadingCard(data);
@@ -1496,12 +1740,20 @@
         } else if (data.last_took) {
           document.getElementById("sideEta").innerHTML = "Last <strong>" + data.last_took + "</strong>";
         }
-        setProgress(data);
+        const statusModel = data.active_model || data.default_model;
+        if (statusModel && statusModel !== currentModelId && modelsCache.length) {
+          const m = modelsCache.find((x) => x.id === statusModel);
+          if (m) {
+            applyModelMeta(m);
+            renderModelPop();
+          }
+        }
         if (data.chat_id) activeChatId = data.chat_id;
         if (typeof data.chat_count === "number") {
           chatCountEl.textContent = String(data.chat_count);
         }
         const pending = window.__pendingAttachByJob || {};
+        // Render messages first so the loading card can sit below the user prompt.
         (data.messages || []).forEach((msg) => {
           if (msg.role === "user" && msg.job_id && pending[msg.job_id]) {
             msg.attach_urls = pending[msg.job_id];
@@ -1509,6 +1761,7 @@
           addBubble(msg);
         });
         if ((data.messages || []).length) empty.hidden = true;
+        setProgress(data);
       } catch (e) {
         if (e.name !== "AbortError") statusLive.textContent = "Status poll failed";
       }
@@ -1528,6 +1781,7 @@
       fd.set("height", String(genH));
       fd.set("steps", document.getElementById("steps").value || "4");
       fd.set("guidance", document.getElementById("guidance").value || "1.0");
+      fd.set("model", currentModelId || "flux-klein");
       const seed = (document.getElementById("seed").value || "").trim();
       if (seed) fd.set("seed", seed);
       attachments.forEach((a) => fd.append("images", a.file, a.file.name));
@@ -1565,7 +1819,7 @@
     setInterval(refresh, 500);
     refresh();
     refreshChats();
-    refreshEstimate();
+    refreshModels().then(() => refreshEstimate());
     syncPresetActive();
     syncSend();
   </script>
